@@ -50,10 +50,9 @@
 
 ### 2. 安装脚本
 
-发布后把下面两个地址替换成你的实际链接：
-
-- Greasy Fork：`https://greasyfork.org/zh-CN/scripts/<脚本ID>`（发布后替换）
-- GitHub Raw：`https://raw.githubusercontent.com/<用户名>/mwi-savings/main/mwi-savings.user.js`（发布后替换）
+- GitHub 仓库：<https://github.com/im630/mwi-savings>
+- GitHub Raw：<https://raw.githubusercontent.com/im630/mwi-savings/main/mwi-savings.user.js>
+- Greasy Fork：待发布（发布后补上脚本页链接）
 
 打开链接后 Tampermonkey 会弹出安装页，点击「安装」。
 
@@ -183,15 +182,16 @@
 - 单文件：`mwi-savings.user.js`，无构建步骤；
 - 关键函数：`hookWS`（WebSocket 库存）、`buildCatalog`（物品目录）、`evaluate`（资金池 / 进度）、`refreshInventory`（库存刷新）；
 - 本地测试：Tampermonkey 新建脚本粘贴，使用干净浏览器配置测试安装、权限和更新；
-- 发布前：修改 `@version`、`@homepage`、`@license`，替换 README 里的安装链接；
+- 发布前：修改 `@version`、`@license`，替换 README 里的 Greasy Fork 链接；
 - 税率按当前 4% 卖出税写在 `SWAP_TAX`；如游戏调整，改这个常量；
-- 内嵌 lz-string 1.4.4（MIT）用于解压 `localStorage.initClientData`。
+- 内嵌 LZ-String 1.4.4 的 `decompressFromUTF16` 可读实现（MIT），用于解压 `localStorage.initClientData`；不再包含压缩/混淆库。
 
 ## 更新日志
-### 0.5.4
 
-- 新增自动更新、主页、下载url。
-- 
+### 0.5.5
+
+- lz-string 改为可读的 `decompressFromUTF16` 实现，移除压缩代码，便于 Greasy Fork 审核。
+
 ### 0.5.3
 
 - 置换统一扣 4% 税（买价 / 卖价估值都扣）；心愿购买不扣税；表头和评估卡标注税后。
@@ -216,4 +216,4 @@
 
 ## 许可证
 
-MIT。可自由使用、修改、分发；请保留版权声明。第三方 lz-string 1.4.4 也是 MIT。
+MIT。可自由使用、修改、分发；请保留版权声明。第三方 LZ-String 1.4.4 也是 MIT。
