@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱
 // @namespace    mwi.savings
-// @version      0.5.3
+// @version      0.5.4
 // @author       im630
 // @description  心愿 / 置换 / 评估：按市场买卖价计算攒钱进度
-// @homepage     https://www.milkywayidlecn.com/
+// @homepage     https://raw.githubusercontent.com/im630/mwi-savings/main/mwi-savings.user.js
+// @downloadURL https://raw.githubusercontent.com/im630/mwi-savings/main/mwi-savings.user.js
+// @updateURL   https://raw.githubusercontent.com/im630/mwi-savings/main/mwi-savings.user.js
 // @match        https://www.milkywayidlecn.com/*
 // @match        https://milkywayidlecn.com/*
 // @run-at       document-start
