@@ -1140,7 +1140,7 @@
 
     return '<div class="mwi-cards">' +
         card('当前金币', fmt(ev.gold)) +
-        card('置换市值(税后)', fmt(ev.swapsValue)) +
+        card('置换市值', fmt(ev.swapsValue)) +
         card('心愿总价', fmt(ev.totalWishValue)) +
         card('还差', fmt(ev.totalGap)) +
         card('总进度', pct(ev.overall)) +
