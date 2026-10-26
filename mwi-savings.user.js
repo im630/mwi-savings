@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱
 // @namespace    mwi.savings
-// @version      0.5.6
+// @version      0.6.0
 // @author       im630
 // @description  心愿 / 置换 / 评估：按市场买卖价计算攒钱进度
 // @homepage     https://github.com/im630/mwi-savings
@@ -300,7 +300,7 @@
     boundLists: new WeakSet(),
     draft: {
       wish: { q: '', hrid: null, enh: 0, qty: 1 },
-      swap: { q: '', hrid: null, enh: 0, qty: 1 }
+      swap: { q: '', hrid: null, enh: 0, qty: 1, all: false }
     }
   };
 
@@ -338,6 +338,16 @@
 
   function trim(s) {
     return String(s).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+  }
+
+  function fmtQty(n) {
+    n = Number(n) || 0;
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return trim((n / 1e12).toFixed(2)) + 'T';
+    if (abs >= 1e9) return trim((n / 1e9).toFixed(2)) + 'B';
+    if (abs >= 1e6) return trim((n / 1e6).toFixed(2)) + 'M';
+    if (abs >= 1e3) return trim((n / 1e3).toFixed(2)) + 'K';
+    return String(Math.round(n));
   }
 
   function pct(x) {
@@ -409,21 +419,28 @@
       const settings = Object.assign({}, d.settings, s.settings || {});
       if (settings.wishBasis !== 'a' && settings.wishBasis !== 'b') settings.wishBasis = 'a';
       if (settings.swapBasis !== 'a' && settings.swapBasis !== 'b') settings.swapBasis = 'b';
-      function norm(arr) {
+      function norm(arr, opts) {
         if (!Array.isArray(arr)) return [];
+        const keepAll = !!(opts && opts.keepAll);
         return arr.filter(function (x) { return x && x.hrid; }).map(function (x) {
+          const all = keepAll ? !!x.all : false;
+          let qty = Math.floor(Number(x.qty));
+          if (!isFinite(qty)) qty = all ? 0 : 1;
+          if (qty < 0) qty = 0;
+          if (!all && qty < 1) qty = 1;
           return {
             id: x.id || uid(),
             hrid: x.hrid,
             enh: Number(x.enh) || 0,
-            qty: Math.max(1, Math.floor(Number(x.qty) || 1))
+            qty: qty,
+            all: keepAll ? all : undefined
           };
         });
       }
       return {
         version: 1,
         wishes: norm(s.wishes),
-        swaps: norm(s.swaps),
+        swaps: norm(s.swaps, { keepAll: true }),
         settings: settings,
         ui: Object.assign({}, d.ui, s.ui || {})
       };
@@ -811,6 +828,45 @@
     setTimeout(ensureUI, 100);
   }
 
+  function syncAllSwaps() {
+    if (!state.swaps || !state.swaps.length) return;
+    const allKeys = {};
+    for (let i = 0; i < state.swaps.length; i++) {
+      const s = state.swaps[i];
+      if (s.all) allKeys[s.hrid + '|' + s.enh] = true;
+    }
+    if (!Object.keys(allKeys).length) return;
+
+    let changed = false;
+    const filtered = state.swaps.filter(function (s) {
+      return s.all || !allKeys[s.hrid + '|' + s.enh];
+    });
+    if (filtered.length !== state.swaps.length) {
+      state.swaps = filtered;
+      changed = true;
+    }
+
+    const seen = {};
+    for (let i = state.swaps.length - 1; i >= 0; i--) {
+      const s = state.swaps[i];
+      if (!s.all) continue;
+      const key = s.hrid + '|' + s.enh;
+      if (seen[key]) {
+        state.swaps.splice(i, 1);
+        changed = true;
+        continue;
+      }
+      seen[key] = true;
+      const qty = invQty(s.hrid, s.enh);
+      if (s.qty !== qty) {
+        s.qty = qty;
+        changed = true;
+      }
+    }
+
+    if (changed) saveState();
+  }
+
   function setInventory(items) {
     rt.inventoryRaw = items;
     let cid = null;
@@ -842,6 +898,7 @@
     }
     rt.gold = gold;
     rt.inventoryAt = Date.now();
+    syncAllSwaps();
     console.log('[攒钱] 库存已读取：' + list.length + ' 条，金币 ' + gold);
     scheduleRender();
   }
@@ -1186,14 +1243,18 @@
     const d = rt.draft.swap;
     let pending = '';
     if (d.hrid) {
-      const avail = Math.max(0, invQty(d.hrid, d.enh) - swapAssigned(d.hrid, d.enh));
+      const stock = invQty(d.hrid, d.enh);
+      const avail = Math.max(0, stock - swapAssigned(d.hrid, d.enh));
+      const shown = d.all ? stock : avail;
       pending =
         '<div class="mwi-pending">' + icon(d.hrid) +
         '<b>' + esc(displayName(d.hrid, d.enh)) + '</b>' +
-        '<span class="mwi-dim">库存 ' + avail + '</span>' +
-        '<label>数量 <input class="mwi-input" style="width:64px" type="number" min="1" max="' + Math.max(1, avail) +
-          '" value="' + esc(d.qty) + '" data-role="swap-qty"></label>' +
-        '<button class="mwi-btn primary" data-act="add-swap">添加</button>' +
+        '<span class="mwi-dim" title="库存 ' + stock + '">库存 ' + fmtQty(shown) + '</span>' +
+        '<label>数量 <input class="mwi-input" style="width:64px" type="number" min="1" max="' + Math.max(1, shown) +
+          '" value="' + esc(d.all ? stock : d.qty) + '" data-role="swap-qty"' + (d.all ? ' disabled' : '') + '></label>' +
+        '<label class="mwi-check"><input type="checkbox" data-role="swap-all"' + (d.all ? ' checked' : '') +
+          (stock <= 0 ? ' disabled' : '') + '> 全部</label>' +
+        '<button class="mwi-btn primary" data-act="add-swap"' + (shown <= 0 ? ' disabled' : '') + '>添加</button>' +
         '<button class="mwi-btn" data-act="cancel-swap">取消</button>' +
         '</div>';
     }
@@ -1229,7 +1290,7 @@
       return '<div class="mwi-result" data-act="select-swap" data-hrid="' + esc(e.hrid) +
         '" data-enh="' + e.enh + '" data-name="' + esc(displayName(e.hrid, e.enh)) + '">' +
         icon(e.hrid) + '<span>' + esc(displayName(e.hrid, e.enh)) + '</span>' + tags +
-        '<span class="mwi-dim">库存 ' + e.qty + '</span></div>';
+        '<span class="mwi-dim" title="库存 ' + e.qty + '">库存 ' + fmtQty(e.qty) + '</span></div>';
     }).join('');
   }
 
@@ -1253,7 +1314,9 @@
         const stock = invQty(s.hrid, s.enh);
         return '<div class="mwi-tr mwi-swap-tr">' +
           '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（库存 ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
-          '<span class="num">' + s.qty + '</span>' +
+          '<span class="num" title="' + esc('数量 ' + s.qty + (s.all ? '（全部）' : '')) + '">' +
+            fmtQty(s.qty) + (s.all ? '<span class="mwi-tag">全部</span>' : '') +
+          '</span>' +
           '<span class="num">' + (ask == null ? '—' : fmt(ask)) + '</span>' +
           '<span class="num">' + (bid == null ? '—' : fmt(bid)) + '</span>' +
           '<span class="num">' + subtotal + '</span>' +
@@ -1415,6 +1478,7 @@
       d.enh = Number(el.dataset.enh) || 0;
       d.q = el.dataset.name || displayName(d.hrid, d.enh);
       d.qty = 1;
+      d.all = false;
       render(); return;
     }
     if (act === 'del-swap') {
@@ -1452,6 +1516,11 @@
       const v = clampInt(e.target.value, 0, max);
       rt.draft.wish.enh = v;
       e.target.value = v;
+    } else if (role === 'swap-all') {
+      const d = rt.draft.swap;
+      d.all = !!e.target.checked;
+      if (d.all && d.hrid) d.qty = invQty(d.hrid, d.enh);
+      render();
     }
   }
 
@@ -1475,7 +1544,7 @@
   }
 
   function resetDraft(kind) {
-    rt.draft[kind] = { q: '', hrid: null, enh: 0, qty: 1 };
+    rt.draft[kind] = { q: '', hrid: null, enh: 0, qty: 1, all: false };
   }
 
   function addWish() {
@@ -1497,11 +1566,30 @@
     if (!d.hrid) return;
     const enh = Number(d.enh) || 0;
     const stock = invQty(d.hrid, enh);
+    const all = !!d.all;
+    const same = function (s) { return s.hrid === d.hrid && s.enh === enh; };
+
+    if (all) {
+      if (stock <= 0) return;
+      const allSame = state.swaps.filter(function (s) { return s.all && same(s); });
+      if (allSame.length) {
+        const keep = allSame[0];
+        keep.qty = stock;
+        state.swaps = state.swaps.filter(function (s) { return s === keep || !same(s); });
+      } else {
+        state.swaps = state.swaps.filter(function (s) { return !same(s); });
+        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true });
+      }
+      resetDraft('swap');
+      saveState(); render();
+      return;
+    }
+
     const assigned = swapAssigned(d.hrid, enh);
     const max = Math.max(0, stock - assigned);
     if (max <= 0) return;
     const qty = Math.min(max, Math.max(1, Math.floor(Number(d.qty) || 1)));
-    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty });
+    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false });
     resetDraft('swap');
     saveState(); render();
   }
@@ -1917,10 +2005,11 @@
       .mwi-icon { width: 22px; height: 22px; flex: 0 0 22px; }
       .mwi-icon-ph { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: #2e3a52; border-radius: 3px; font-size: 11px; }
       .mwi-pending { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 7px; font-size: 12px; }
+      .mwi-check { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
       .mwi-table { width: 100%; overflow-x: auto; }
       .mwi-tr { display: grid; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid #2a3247; min-width: 0; }
       .mwi-wish-tr { grid-template-columns: 42px 32px 46px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
-      .mwi-swap-tr { grid-template-columns: 32px 46px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
+      .mwi-swap-tr { grid-template-columns: 32px 78px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
       .mwi-th { color: #8f9ab3; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #2f3850; }
       .mwi-tr .num { text-align: right; white-space: nowrap; }
       .mwi-item { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; }
