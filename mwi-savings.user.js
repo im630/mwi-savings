@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱
 // @namespace    mwi.savings
-// @version      0.5.5
+// @version      0.5.6
 // @author       im630
 // @description  心愿 / 置换 / 评估：按市场买卖价计算攒钱进度
 // @homepage     https://github.com/im630/mwi-savings
@@ -609,6 +609,27 @@
 
   /* ---------------------------- 库存 ---------------------------- */
 
+  function asArray(raw) {
+    if (!raw) return null;
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw.values === 'function') return Array.from(raw.values());
+    if (typeof raw === 'object') return Object.values(raw);
+    return null;
+  }
+
+  function asLiveNumber(v) {
+    if (typeof v === 'number' && isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim() !== '') {
+      const n = Number(v);
+      if (isFinite(n)) return n;
+    }
+    if (v && typeof v === 'object') {
+      const n = v.amount != null ? v.amount : v.value;
+      if (typeof n === 'number' && isFinite(n)) return n;
+    }
+    return null;
+  }
+
   function readLiveItems() {
     const states = [
       pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
@@ -620,12 +641,7 @@
       const st = states[i];
       if (!st) continue;
       for (let j = 0; j < fields.length; j++) {
-        const raw = st[fields[j]];
-        if (!raw) continue;
-        let arr = null;
-        if (Array.isArray(raw)) arr = raw;
-        else if (typeof raw.values === 'function') arr = Array.from(raw.values());
-        else if (typeof raw === 'object') arr = Object.values(raw);
+        const arr = asArray(st[fields[j]]);
         if (arr && arr.length && arr.some(function (it) {
           return it && (it.itemHrid || it.hrid) && (it.count != null || it.quantity != null);
         })) {
@@ -634,6 +650,105 @@
       }
     }
     return null;
+  }
+
+  function findGoldDeep(root) {
+    const seen = new WeakSet();
+    function walk(obj, depth) {
+      if (!obj || typeof obj !== 'object' || depth < 0 || seen.has(obj)) return null;
+      seen.add(obj);
+      const keys = Object.keys(obj);
+      for (let i = 0; i < keys.length; i++) {
+        if (/^(coins?|characterCoins|money|currency|gold)$/i.test(keys[i])) {
+          const n = asLiveNumber(obj[keys[i]]);
+          if (n != null) return n;
+        }
+      }
+      for (let i = 0; i < keys.length; i++) {
+        const v = obj[keys[i]];
+        if (v && typeof v === 'object') {
+          const n = walk(v, depth - 1);
+          if (n != null) return n;
+        }
+      }
+      return null;
+    }
+    return walk(root, 3);
+  }
+
+  function readLiveGold() {
+    const states = [
+      pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
+      pageWin.game && pageWin.game.state,
+      pageWin.__game && pageWin.__game.state
+    ];
+    const fields = ['characterItems', 'characterItemMap', 'characterItemsMap', 'items', 'inventory'];
+    for (let i = 0; i < states.length; i++) {
+      const st = states[i];
+      if (!st) continue;
+
+      for (let j = 0; j < fields.length; j++) {
+        const arr = asArray(st[fields[j]]);
+        if (!arr) continue;
+        let sum = 0;
+        let found = false;
+        for (let k = 0; k < arr.length; k++) {
+          const it = arr[k];
+          if (!it) continue;
+          const hrid = it.itemHrid || it.hrid;
+          if (hrid !== '/items/coin') continue;
+          if ((it.itemLocationHrid || INV_LOC) !== INV_LOC) continue;
+          const q = Number(it.count != null ? it.count : it.quantity);
+          if (!isFinite(q)) continue;
+          sum += q;
+          found = true;
+        }
+        if (found) return sum;
+      }
+
+      const chars = [st.character, st.characterData, st.characterInfo];
+      for (let j = 0; j < chars.length; j++) {
+        const c = chars[j];
+        if (!c || typeof c !== 'object') continue;
+        const vals = [c.coins, c.characterCoins];
+        for (let k = 0; k < vals.length; k++) {
+          const n = asLiveNumber(vals[k]);
+          if (n != null) return n;
+        }
+        const deep = findGoldDeep(c);
+        if (deep != null) return deep;
+      }
+
+      for (let j = 0; j < chars.length; j++) {
+        const c = chars[j];
+        if (!c || typeof c !== 'object') continue;
+        const vals = [c.gold, c.money, c.coin];
+        for (let k = 0; k < vals.length; k++) {
+          const n = asLiveNumber(vals[k]);
+          if (n != null) return n;
+        }
+      }
+
+      const direct = [st.coins, st.characterCoins, st.money, st.currency, st.gold];
+      for (let j = 0; j < direct.length; j++) {
+        const n = asLiveNumber(direct[j]);
+        if (n != null) return n;
+      }
+    }
+    return null;
+  }
+
+  function itemsHaveCoin(items) {
+    for (let i = 0; i < (items || []).length; i++) {
+      const it = items[i];
+      if (!it) continue;
+      const hrid = it.itemHrid || it.hrid;
+      if (hrid !== '/items/coin') continue;
+      if ((it.itemLocationHrid || INV_LOC) !== INV_LOC) continue;
+      const q = Number(it.count != null ? it.count : it.quantity);
+      if (isFinite(q)) return true;
+    }
+    return false;
   }
 
   let noticeTimer = null;
@@ -654,10 +769,25 @@
     setTimeout(function () {
       try {
         const live = readLiveItems();
+        const liveGold = readLiveGold();
         const items = live || rt.inventoryRaw;
+        const oldGold = rt.gold || 0;
+        const hasCoin = itemsHaveCoin(items);
         if (items && items.length) {
           setInventory(items);
-          showNotice(live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）');
+          if (liveGold != null) {
+            rt.gold = liveGold;
+          } else if (!hasCoin) {
+            rt.gold = oldGold;
+          }
+          const goldNote = liveGold != null ? '，金币已更新' : (!hasCoin ? '，金币未读取到，保留原值' : '');
+          showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
+          console.log('[攒钱] 刷新库存：实时=' + !!live + '，金币=' + rt.gold +
+            (liveGold != null ? '（独立金币字段）' : (hasCoin ? '（库存金币）' : '（保留原值）')));
+        } else if (liveGold != null) {
+          rt.gold = liveGold;
+          showNotice('金币已刷新（实时），但未读取到库存');
+          console.log('[攒钱] 刷新库存：仅更新金币 ' + rt.gold);
         } else {
           showNotice('未读取到库存，请刷新页面后重试');
         }
