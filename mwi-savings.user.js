@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱
 // @namespace    mwi.savings
-// @version      0.6.0
+// @version      0.6.1
 // @author       im630
 // @description  心愿 / 置换 / 评估：按市场买卖价计算攒钱进度
 // @homepage     https://github.com/im630/mwi-savings
@@ -693,7 +693,17 @@
     return walk(root, 3);
   }
 
-  function readLiveGold() {
+  function addGoldCandidate(list, value, source, priority) {
+    const n = asLiveNumber(value);
+    if (n == null) return;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].source === source && list[i].value === n) return;
+    }
+    list.push({ value: n, source: source, priority: priority });
+  }
+
+  function readLiveGoldCandidates() {
+    const list = [];
     const states = [
       pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
       pageWin.game && pageWin.game.state,
@@ -720,42 +730,63 @@
           sum += q;
           found = true;
         }
-        if (found) return sum;
+        if (found) addGoldCandidate(list, sum, '库存金币', 1);
       }
 
       const chars = [st.character, st.characterData, st.characterInfo];
       for (let j = 0; j < chars.length; j++) {
         const c = chars[j];
         if (!c || typeof c !== 'object') continue;
-        const vals = [c.coins, c.characterCoins];
-        for (let k = 0; k < vals.length; k++) {
-          const n = asLiveNumber(vals[k]);
-          if (n != null) return n;
+        addGoldCandidate(list, c.coins, '角色 coins', 2);
+        addGoldCandidate(list, c.characterCoins, '角色 characterCoins', 2);
+        const directCoins = asLiveNumber(c.coins) != null || asLiveNumber(c.characterCoins) != null;
+        if (!directCoins) {
+          const deep = findGoldDeep(c);
+          if (deep != null) addGoldCandidate(list, deep, '角色嵌套金币', 4);
         }
-        const deep = findGoldDeep(c);
-        if (deep != null) return deep;
       }
 
       for (let j = 0; j < chars.length; j++) {
         const c = chars[j];
         if (!c || typeof c !== 'object') continue;
-        const vals = [c.gold, c.money, c.coin];
-        for (let k = 0; k < vals.length; k++) {
-          const n = asLiveNumber(vals[k]);
-          if (n != null) return n;
-        }
+        addGoldCandidate(list, c.gold, '角色 gold', 3);
+        addGoldCandidate(list, c.money, '角色 money', 3);
+        addGoldCandidate(list, c.coin, '角色 coin', 3);
       }
 
-      const direct = [st.coins, st.characterCoins, st.money, st.currency, st.gold];
-      for (let j = 0; j < direct.length; j++) {
-        const n = asLiveNumber(direct[j]);
-        if (n != null) return n;
-      }
+      addGoldCandidate(list, st.coins, '顶层 coins', 5);
+      addGoldCandidate(list, st.characterCoins, '顶层 characterCoins', 5);
+      addGoldCandidate(list, st.money, '顶层 money', 5);
+      addGoldCandidate(list, st.currency, '顶层 currency', 5);
+      addGoldCandidate(list, st.gold, '顶层 gold', 5);
     }
-    return null;
+    return list;
   }
 
-  function itemsHaveCoin(items) {
+  function chooseLiveGold(candidates, oldGold) {
+    if (!candidates.length) return null;
+    const byValue = {};
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i];
+      if (!byValue[c.value] || c.priority < byValue[c.value].priority) {
+        byValue[c.value] = c;
+      }
+    }
+    const unique = Object.keys(byValue).map(function (k) { return byValue[k]; });
+    const changed = unique.filter(function (c) { return c.value !== oldGold; });
+    const pool = changed.length ? changed : unique;
+    pool.sort(function (a, b) { return a.priority - b.priority; });
+    return pool[0];
+  }
+
+  function readLiveGold() {
+    const picked = chooseLiveGold(readLiveGoldCandidates(), rt.gold || 0);
+    return picked ? picked.value : null;
+  }
+
+  function sumCoin(items) {
+    let sum = 0;
+    let found = false;
     for (let i = 0; i < (items || []).length; i++) {
       const it = items[i];
       if (!it) continue;
@@ -763,9 +794,15 @@
       if (hrid !== '/items/coin') continue;
       if ((it.itemLocationHrid || INV_LOC) !== INV_LOC) continue;
       const q = Number(it.count != null ? it.count : it.quantity);
-      if (isFinite(q)) return true;
+      if (!isFinite(q)) continue;
+      sum += q;
+      found = true;
     }
-    return false;
+    return found ? sum : null;
+  }
+
+  function itemsHaveCoin(items) {
+    return sumCoin(items) != null;
   }
 
   let noticeTimer = null;
@@ -786,25 +823,32 @@
     setTimeout(function () {
       try {
         const live = readLiveItems();
-        const liveGold = readLiveGold();
         const items = live || rt.inventoryRaw;
+        const candidates = readLiveGoldCandidates();
+        const itemCoin = sumCoin(items);
+        if (itemCoin != null) addGoldCandidate(candidates, itemCoin, '当前库存快照', 0);
         const oldGold = rt.gold || 0;
-        const hasCoin = itemsHaveCoin(items);
+        const picked = chooseLiveGold(candidates, oldGold);
+        const goldChanged = !!(picked && picked.value !== oldGold);
+        const hasCoin = itemCoin != null;
+        const candText = candidates.map(function (c) { return c.source + ':' + c.value; }).join(' | ');
         if (items && items.length) {
           setInventory(items);
-          if (liveGold != null) {
-            rt.gold = liveGold;
+          if (picked) {
+            rt.gold = picked.value;
           } else if (!hasCoin) {
             rt.gold = oldGold;
           }
-          const goldNote = liveGold != null ? '，金币已更新' : (!hasCoin ? '，金币未读取到，保留原值' : '');
+          const goldNote = picked ? (goldChanged ? '，金币已更新' : '') : (!hasCoin ? '，金币未读取到，保留原值' : '');
           showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
           console.log('[攒钱] 刷新库存：实时=' + !!live + '，金币=' + rt.gold +
-            (liveGold != null ? '（独立金币字段）' : (hasCoin ? '（库存金币）' : '（保留原值）')));
-        } else if (liveGold != null) {
-          rt.gold = liveGold;
+            '（' + (picked ? picked.source : (hasCoin ? '库存金币' : '保留原值')) + '）' +
+            '，候选=' + (candText || '无'));
+        } else if (picked) {
+          rt.gold = picked.value;
           showNotice('金币已刷新（实时），但未读取到库存');
-          console.log('[攒钱] 刷新库存：仅更新金币 ' + rt.gold);
+          console.log('[攒钱] 刷新库存：仅更新金币 ' + rt.gold +
+            '（' + picked.source + '），候选=' + (candText || '无'));
         } else {
           showNotice('未读取到库存，请刷新页面后重试');
         }
