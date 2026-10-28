@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         银河奶牛 · 攒钱
+// @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.6.2
+// @version      0.6.3
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
