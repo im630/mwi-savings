@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱
 // @namespace    mwi.savings
-// @version      0.6.1
+// @version      0.6.2
 // @author       im630
 // @description  心愿 / 置换 / 评估：按市场买卖价计算攒钱进度
 // @homepage     https://github.com/im630/mwi-savings
@@ -674,6 +674,17 @@
     function walk(obj, depth) {
       if (!obj || typeof obj !== 'object' || depth < 0 || seen.has(obj)) return null;
       seen.add(obj);
+      if (typeof obj.values === 'function') {
+        const vals = Array.from(obj.values());
+        for (let i = 0; i < vals.length; i++) {
+          const v = vals[i];
+          if (v && typeof v === 'object') {
+            const n = walk(v, depth - 1);
+            if (n != null) return n;
+          }
+        }
+        return null;
+      }
       const keys = Object.keys(obj);
       for (let i = 0; i < keys.length; i++) {
         if (/^(coins?|characterCoins|money|currency|gold)$/i.test(keys[i])) {
@@ -691,6 +702,45 @@
       return null;
     }
     return walk(root, 3);
+  }
+
+  function collectCharacterObjects(st) {
+    const out = [];
+    function addRaw(raw, mapLike) {
+      if (!raw || typeof raw !== 'object') return;
+      if (typeof raw.values === 'function') {
+        const vals = Array.from(raw.values());
+        for (let i = 0; i < vals.length; i++) {
+          if (vals[i] && typeof vals[i] === 'object') out.push(vals[i]);
+        }
+        return;
+      }
+      if (Array.isArray(raw)) {
+        for (let i = 0; i < raw.length; i++) {
+          if (raw[i] && typeof raw[i] === 'object') out.push(raw[i]);
+        }
+        return;
+      }
+      if (mapLike) {
+        const vals = Object.values(raw);
+        for (let i = 0; i < vals.length; i++) {
+          if (vals[i] && typeof vals[i] === 'object') out.push(vals[i]);
+        }
+        return;
+      }
+      out.push(raw);
+    }
+    addRaw(st.character, false);
+    addRaw(st.characterData, false);
+    addRaw(st.characterInfo, false);
+    addRaw(st.characters, true);
+    addRaw(st.characterMap, true);
+    addRaw(st.characterById, true);
+    return out;
+  }
+
+  function itemLoc(it) {
+    return it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location || INV_LOC;
   }
 
   function addGoldCandidate(list, value, source, priority) {
@@ -724,21 +774,20 @@
           if (!it) continue;
           const hrid = it.itemHrid || it.hrid;
           if (hrid !== '/items/coin') continue;
-          if ((it.itemLocationHrid || INV_LOC) !== INV_LOC) continue;
+          if (itemLoc(it) !== INV_LOC) continue;
           const q = Number(it.count != null ? it.count : it.quantity);
           if (!isFinite(q)) continue;
           sum += q;
           found = true;
         }
-        if (found) addGoldCandidate(list, sum, '库存金币', 1);
+        if (found) addGoldCandidate(list, sum, '库存金币', 2);
       }
 
-      const chars = [st.character, st.characterData, st.characterInfo];
+      const chars = collectCharacterObjects(st);
       for (let j = 0; j < chars.length; j++) {
         const c = chars[j];
-        if (!c || typeof c !== 'object') continue;
-        addGoldCandidate(list, c.coins, '角色 coins', 2);
-        addGoldCandidate(list, c.characterCoins, '角色 characterCoins', 2);
+        addGoldCandidate(list, c.coins, '角色 coins', 0);
+        addGoldCandidate(list, c.characterCoins, '角色 characterCoins', 0);
         const directCoins = asLiveNumber(c.coins) != null || asLiveNumber(c.characterCoins) != null;
         if (!directCoins) {
           const deep = findGoldDeep(c);
@@ -748,7 +797,6 @@
 
       for (let j = 0; j < chars.length; j++) {
         const c = chars[j];
-        if (!c || typeof c !== 'object') continue;
         addGoldCandidate(list, c.gold, '角色 gold', 3);
         addGoldCandidate(list, c.money, '角色 money', 3);
         addGoldCandidate(list, c.coin, '角色 coin', 3);
@@ -759,6 +807,9 @@
       addGoldCandidate(list, st.money, '顶层 money', 5);
       addGoldCandidate(list, st.currency, '顶层 currency', 5);
       addGoldCandidate(list, st.gold, '顶层 gold', 5);
+
+      const deepState = findGoldDeep(st);
+      if (deepState != null) addGoldCandidate(list, deepState, '状态嵌套金币', 6);
     }
     return list;
   }
@@ -773,10 +824,12 @@
       }
     }
     const unique = Object.keys(byValue).map(function (k) { return byValue[k]; });
-    const changed = unique.filter(function (c) { return c.value !== oldGold; });
-    const pool = changed.length ? changed : unique;
-    pool.sort(function (a, b) { return a.priority - b.priority; });
-    return pool[0];
+    unique.sort(function (a, b) { return a.priority - b.priority; });
+    const topPriority = unique[0].priority;
+    const top = unique.filter(function (c) { return c.priority === topPriority; });
+    if (top.length === 1) return top[0];
+    const changed = top.filter(function (c) { return c.value !== oldGold; });
+    return changed.length ? changed[0] : top[0];
   }
 
   function readLiveGold() {
@@ -792,7 +845,7 @@
       if (!it) continue;
       const hrid = it.itemHrid || it.hrid;
       if (hrid !== '/items/coin') continue;
-      if ((it.itemLocationHrid || INV_LOC) !== INV_LOC) continue;
+      if (itemLoc(it) !== INV_LOC) continue;
       const q = Number(it.count != null ? it.count : it.quantity);
       if (!isFinite(q)) continue;
       sum += q;
@@ -803,6 +856,42 @@
 
   function itemsHaveCoin(items) {
     return sumCoin(items) != null;
+  }
+
+  function goldDebugText() {
+    const out = [];
+    const states = [
+      pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
+      pageWin.game && pageWin.game.state,
+      pageWin.__game && pageWin.__game.state
+    ];
+    const fields = ['characterItems', 'characterItemMap', 'characterItemsMap', 'items', 'inventory'];
+    for (let i = 0; i < states.length; i++) {
+      const st = states[i];
+      if (!st) continue;
+      try {
+        out.push('keys=' + Object.keys(st).slice(0, 25).join(','));
+      } catch (e) { /* ignore */ }
+      const chars = collectCharacterObjects(st);
+      for (let j = 0; j < chars.length && j < 3; j++) {
+        try {
+          out.push('char=' + Object.keys(chars[j]).slice(0, 20).join(','));
+        } catch (e) { /* ignore */ }
+      }
+      for (let j = 0; j < fields.length; j++) {
+        const arr = asArray(st[fields[j]]);
+        if (!arr) continue;
+        for (let k = 0; k < arr.length; k++) {
+          const it = arr[k];
+          if (!it) continue;
+          const hrid = it.itemHrid || it.hrid;
+          if (hrid !== '/items/coin') continue;
+          out.push('coin=' + (it.count != null ? it.count : it.quantity) +
+            '@' + itemLoc(it));
+        }
+      }
+    }
+    return out.join(' ; ');
   }
 
   let noticeTimer = null;
@@ -826,7 +915,7 @@
         const items = live || rt.inventoryRaw;
         const candidates = readLiveGoldCandidates();
         const itemCoin = sumCoin(items);
-        if (itemCoin != null) addGoldCandidate(candidates, itemCoin, '当前库存快照', 0);
+        if (itemCoin != null) addGoldCandidate(candidates, itemCoin, '当前库存快照', 1);
         const oldGold = rt.gold || 0;
         const picked = chooseLiveGold(candidates, oldGold);
         const goldChanged = !!(picked && picked.value !== oldGold);
@@ -843,7 +932,8 @@
           showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
           console.log('[攒钱] 刷新库存：实时=' + !!live + '，金币=' + rt.gold +
             '（' + (picked ? picked.source : (hasCoin ? '库存金币' : '保留原值')) + '）' +
-            '，候选=' + (candText || '无'));
+            '，候选=' + (candText || '无') +
+            '，诊断=' + goldDebugText());
         } else if (picked) {
           rt.gold = picked.value;
           showNotice('金币已刷新（实时），但未读取到库存');
@@ -932,7 +1022,7 @@
         hrid: hrid,
         enh: Number(it.enhancementLevel || it.enhancement || 0) || 0,
         qty: qty,
-        loc: it.itemLocationHrid || INV_LOC
+        loc: itemLoc(it)
       });
     }
     rt.inventory = list;
