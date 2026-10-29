@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.6.4
+// @version      0.7.0
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -206,6 +206,8 @@
   ];
   const NAMES_TTL = 30 * 24 * 60 * 60 * 1000;
   const INV_LOC = '/item_locations/inventory';
+  const EQUIP_LOC = '/item_locations/equipment';
+  const MARKET_LOC = '/item_locations/market';
   const LOCATIONS = ['库存', '技能', '装备', '房屋', 'Inventory', 'Skills', 'Equipment', 'House'];
 
   const NAME_OVERRIDES = {
@@ -303,7 +305,7 @@
     boundLists: new WeakSet(),
     draft: {
       wish: { q: '', hrid: null, enh: 0, qty: 1 },
-      swap: { q: '', hrid: null, enh: 0, qty: 1, all: false }
+      swap: { q: '', hrid: null, enh: 0, qty: 1, all: false, loc: INV_LOC }
     }
   };
 
@@ -427,6 +429,7 @@
         const keepAll = !!(opts && opts.keepAll);
         return arr.filter(function (x) { return x && x.hrid; }).map(function (x) {
           const all = keepAll ? !!x.all : false;
+          const loc = keepAll ? (isSwapLoc(x.loc) ? x.loc : INV_LOC) : undefined;
           let qty = Math.floor(Number(x.qty));
           if (!isFinite(qty)) qty = all ? 0 : 1;
           if (qty < 0) qty = 0;
@@ -436,7 +439,8 @@
             hrid: x.hrid,
             enh: Number(x.enh) || 0,
             qty: qty,
-            all: keepAll ? all : undefined
+            all: keepAll ? all : undefined,
+            loc: loc
           };
         });
       }
@@ -746,6 +750,27 @@
     return it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location || INV_LOC;
   }
 
+  function isSwapLoc(loc) {
+    if (!loc) return false;
+    return loc === INV_LOC ||
+      loc.indexOf('/item_locations/equipment') === 0 ||
+      loc.indexOf('/item_locations/market') === 0;
+  }
+
+  function locLabel(loc) {
+    if (!loc || loc === INV_LOC) return '库存';
+    if (loc.indexOf('/item_locations/equipment') === 0) return '装备';
+    if (loc.indexOf('/item_locations/market') === 0) return '市场';
+    return '其他';
+  }
+
+  function locRank(loc) {
+    if (!loc || loc === INV_LOC) return 0;
+    if (loc.indexOf('/item_locations/equipment') === 0) return 1;
+    if (loc.indexOf('/item_locations/market') === 0) return 2;
+    return 3;
+  }
+
   function addGoldCandidate(list, value, source, priority) {
     const n = asLiveNumber(value);
     if (n == null) return;
@@ -967,16 +992,17 @@
 
   function syncAllSwaps() {
     if (!state.swaps || !state.swaps.length) return;
+    const keyOf = function (s) { return s.hrid + '|' + s.enh + '|' + (s.loc || INV_LOC); };
     const allKeys = {};
     for (let i = 0; i < state.swaps.length; i++) {
       const s = state.swaps[i];
-      if (s.all) allKeys[s.hrid + '|' + s.enh] = true;
+      if (s.all) allKeys[keyOf(s)] = true;
     }
     if (!Object.keys(allKeys).length) return;
 
     let changed = false;
     const filtered = state.swaps.filter(function (s) {
-      return s.all || !allKeys[s.hrid + '|' + s.enh];
+      return s.all || !allKeys[keyOf(s)];
     });
     if (filtered.length !== state.swaps.length) {
       state.swaps = filtered;
@@ -987,14 +1013,14 @@
     for (let i = state.swaps.length - 1; i >= 0; i--) {
       const s = state.swaps[i];
       if (!s.all) continue;
-      const key = s.hrid + '|' + s.enh;
+      const key = keyOf(s);
       if (seen[key]) {
         state.swaps.splice(i, 1);
         changed = true;
         continue;
       }
       seen[key] = true;
-      const qty = invQty(s.hrid, s.enh);
+      const qty = locQty(s.hrid, s.enh, s.loc || INV_LOC);
       if (s.qty !== qty) {
         s.qty = qty;
         changed = true;
@@ -1036,36 +1062,51 @@
     rt.gold = gold;
     rt.inventoryAt = Date.now();
     syncAllSwaps();
-    console.log('[攒钱] 库存已读取：' + list.length + ' 条，金币 ' + gold);
+    const locCounts = {};
+    for (let i = 0; i < list.length; i++) {
+      locCounts[list[i].loc] = (locCounts[list[i].loc] || 0) + 1;
+    }
+    console.log('[攒钱] 库存已读取：' + list.length + ' 条，金币 ' + gold + '，位置 ' + JSON.stringify(locCounts));
     scheduleRender();
   }
 
-  function invQty(hrid, enh) {
+  function locQty(hrid, enh, loc) {
+    loc = loc || INV_LOC;
     let n = 0;
     for (let i = 0; i < rt.inventory.length; i++) {
       const it = rt.inventory[i];
-      if (it.hrid === hrid && it.enh === enh && it.loc === INV_LOC) n += it.qty;
+      if (it.hrid === hrid && it.enh === enh && it.loc === loc) n += it.qty;
     }
     return n;
   }
 
-  function swapAssigned(hrid, enh) {
+  function invQty(hrid, enh) {
+    return locQty(hrid, enh, INV_LOC);
+  }
+
+  function swapAssigned(hrid, enh, loc) {
     let n = 0;
     for (let i = 0; i < state.swaps.length; i++) {
       const s = state.swaps[i];
-      if (s.hrid === hrid && s.enh === enh) n += s.qty;
+      if (hrid && s.hrid !== hrid) continue;
+      if (enh != null && s.enh !== enh) continue;
+      if (loc && (s.loc || INV_LOC) !== loc) continue;
+      n += s.qty;
     }
     return n;
   }
 
-  function inventoryEntries() {
+  function swapEntries() {
     const map = new Map();
     for (let i = 0; i < rt.inventory.length; i++) {
       const it = rt.inventory[i];
-      if (it.loc !== INV_LOC || it.hrid === '/items/coin') continue;
-      const k = it.hrid + '|' + it.enh;
+      if (it.hrid === '/items/coin' || !isSwapLoc(it.loc)) continue;
+      const k = it.hrid + '|' + it.enh + '|' + it.loc;
       let e = map.get(k);
-      if (!e) { e = { hrid: it.hrid, enh: it.enh, qty: 0 }; map.set(k, e); }
+      if (!e) {
+        e = { hrid: it.hrid, enh: it.enh, loc: it.loc, qty: 0 };
+        map.set(k, e);
+      }
       e.qty += it.qty;
     }
     return Array.from(map.values());
@@ -1165,6 +1206,7 @@
     const swapQty = new Map();
     for (let i = 0; i < state.swaps.length; i++) {
       const s = state.swaps[i];
+      if ((s.loc || INV_LOC) !== INV_LOC) continue;
       const k = s.hrid + '|' + s.enh;
       swapQty.set(k, (swapQty.get(k) || 0) + s.qty);
     }
@@ -1380,13 +1422,16 @@
     const d = rt.draft.swap;
     let pending = '';
     if (d.hrid) {
-      const stock = invQty(d.hrid, d.enh);
-      const avail = Math.max(0, stock - swapAssigned(d.hrid, d.enh));
+      const loc = d.loc || INV_LOC;
+      const stock = locQty(d.hrid, d.enh, loc);
+      const avail = Math.max(0, stock - swapAssigned(d.hrid, d.enh, loc));
       const shown = d.all ? stock : avail;
       pending =
         '<div class="mwi-pending">' + icon(d.hrid) +
         '<b>' + esc(displayName(d.hrid, d.enh)) + '</b>' +
-        '<span class="mwi-dim" title="库存 ' + stock + '">库存 ' + fmtQty(shown) + '</span>' +
+        (loc !== INV_LOC ? '<span class="mwi-tag">' + locLabel(loc) + '</span>' : '') +
+        '<span class="mwi-dim" title="' + locLabel(loc) + ' ' + stock + '">' +
+          locLabel(loc) + ' ' + fmtQty(shown) + '</span>' +
         '<label>数量 <input class="mwi-input" style="width:64px" type="number" min="1" max="' + Math.max(1, shown) +
           '" value="' + esc(d.all ? stock : d.qty) + '" data-role="swap-qty"' + (d.all ? ' disabled' : '') + '></label>' +
         '<label class="mwi-check"><input type="checkbox" data-role="swap-all"' + (d.all ? ' checked' : '') +
@@ -1398,7 +1443,7 @@
     return '<div class="mwi-add">' +
       '<div class="mwi-combo">' +
         '<input class="mwi-input" style="width:100%" data-role="swap-search" autocomplete="off" ' +
-          'placeholder="从库存中选择要置换的物品（按名称搜索）" value="' + esc(d.q) + '">' +
+          'placeholder="从库存、装备、市场挂单中选择要置换的物品（按名称搜索）" value="' + esc(d.q) + '">' +
         '<div class="mwi-results" data-role="swap-results" hidden></div>' +
       '</div>' + pending +
     '</div>';
@@ -1406,7 +1451,7 @@
 
   function swapResultsHtml() {
     const q = String(rt.draft.swap.q || '').trim().toLowerCase();
-    const entries = inventoryEntries().filter(function (e) {
+    const entries = swapEntries().filter(function (e) {
       if (!q) return true;
       const it = rt.catalog && rt.catalog[e.hrid];
       const lab = isLabyrinth(e.hrid, it && it.category);
@@ -1417,23 +1462,37 @@
       if (/lodestone$/.test(e.hrid)) extra.push('磁石', '路标');
       const hay = zh + ' ' + en + ' ' + e.hrid.toLowerCase() + (lab ? ' 迷宫 迷宮 labyrinth' : '') + ' ' + extra.join(' ');
       return hay.indexOf(q) !== -1;
-    }).slice(0, 40);
-    if (!entries.length) return '<div class="mwi-dim" style="padding:8px">库存中没有匹配物品</div>';
-    return entries.map(function (e) {
+    });
+    entries.sort(function (a, b) {
+      return locRank(a.loc) - locRank(b.loc) || a.hrid.localeCompare(b.hrid) || a.enh - b.enh;
+    });
+    const shown = [];
+    const counts = {};
+    for (let i = 0; i < entries.length && shown.length < 40; i++) {
+      const e = entries[i];
+      const max = e.loc === INV_LOC ? 16 : 12;
+      if ((counts[e.loc] || 0) >= max) continue;
+      counts[e.loc] = (counts[e.loc] || 0) + 1;
+      shown.push(e);
+    }
+    if (!shown.length) return '<div class="mwi-dim" style="padding:8px">库存、装备、市场挂单中没有匹配物品</div>';
+    return shown.map(function (e) {
       const it = rt.catalog && rt.catalog[e.hrid];
       const lab = isLabyrinth(e.hrid, it && it.category);
-      const tags = (lab ? '<span class="mwi-tag">迷宫</span>' : '') +
+      const tags = (e.loc !== INV_LOC ? '<span class="mwi-tag">' + locLabel(e.loc) + '</span>' : '') +
+        (lab ? '<span class="mwi-tag">迷宫</span>' : '') +
         (it && !it.tradable ? '<span class="mwi-tag warn">不可交易</span>' : '');
       return '<div class="mwi-result" data-act="select-swap" data-hrid="' + esc(e.hrid) +
-        '" data-enh="' + e.enh + '" data-name="' + esc(displayName(e.hrid, e.enh)) + '">' +
+        '" data-enh="' + e.enh + '" data-loc="' + esc(e.loc) + '" data-name="' + esc(displayName(e.hrid, e.enh)) + '">' +
         icon(e.hrid) + '<span>' + esc(displayName(e.hrid, e.enh)) + '</span>' + tags +
-        '<span class="mwi-dim" title="库存 ' + e.qty + '">库存 ' + fmtQty(e.qty) + '</span></div>';
+        '<span class="mwi-dim" title="' + locLabel(e.loc) + ' ' + e.qty + '">' +
+          locLabel(e.loc) + ' ' + fmtQty(e.qty) + '</span></div>';
     }).join('');
   }
 
   function swapList() {
     if (!state.swaps.length) {
-      return '<div class="mwi-dim">还没有置换物品。从库存中选择要卖掉的物品。</div>';
+      return '<div class="mwi-dim">还没有置换物品。从库存、装备或市场挂单中选择要卖掉的物品。</div>';
     }
     const swapTaxFactor = 1 - SWAP_TAX;
     return '<div class="mwi-section">置换列表</div>' +
@@ -1448,11 +1507,13 @@
         const bid = q && q.b > 0 ? q.b : null;
         const p = pickPrice(rt.market, s.hrid, s.enh, state.settings.swapBasis);
         const subtotal = p.value == null ? '—' : fmt(p.value * s.qty * swapTaxFactor);
-        const stock = invQty(s.hrid, s.enh);
+        const loc = s.loc || INV_LOC;
+        const stock = locQty(s.hrid, s.enh, loc);
         return '<div class="mwi-tr mwi-swap-tr">' +
-          '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（库存 ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
-          '<span class="num" title="' + esc('数量 ' + s.qty + (s.all ? '（全部）' : '')) + '">' +
+          '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（' + locLabel(loc) + ' ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
+          '<span class="num" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + (s.all ? '，全部' : '') + '）') + '">' +
             fmtQty(s.qty) + (s.all ? '<span class="mwi-tag">全部</span>' : '') +
+            (loc !== INV_LOC ? '<span class="mwi-tag">' + locLabel(loc) + '</span>' : '') +
           '</span>' +
           '<span class="num">' + (ask == null ? '—' : fmt(ask)) + '</span>' +
           '<span class="num">' + (bid == null ? '—' : fmt(bid)) + '</span>' +
@@ -1461,7 +1522,7 @@
         '</div>';
       }).join('') +
     '</div>' +
-    '<div class="mwi-dim" style="margin-top:6px">置换卖出按 4% 扣税（按买价或卖价估值都扣）；心愿购买不扣税。</div>';
+    '<div class="mwi-dim" style="margin-top:6px">置换卖出按 4% 扣税（按买价或卖价估值都扣）；心愿购买不扣税。装备/市场挂单的物品需要先卸下/下架再卖出。</div>';
   }
 
   function evalSheet(ev) {
@@ -1616,6 +1677,7 @@
       d.q = el.dataset.name || displayName(d.hrid, d.enh);
       d.qty = 1;
       d.all = false;
+      d.loc = el.dataset.loc || INV_LOC;
       render(); return;
     }
     if (act === 'del-swap') {
@@ -1656,7 +1718,7 @@
     } else if (role === 'swap-all') {
       const d = rt.draft.swap;
       d.all = !!e.target.checked;
-      if (d.all && d.hrid) d.qty = invQty(d.hrid, d.enh);
+      if (d.all && d.hrid) d.qty = locQty(d.hrid, d.enh, d.loc || INV_LOC);
       render();
     }
   }
@@ -1681,7 +1743,7 @@
   }
 
   function resetDraft(kind) {
-    rt.draft[kind] = { q: '', hrid: null, enh: 0, qty: 1, all: false };
+    rt.draft[kind] = { q: '', hrid: null, enh: 0, qty: 1, all: false, loc: INV_LOC };
   }
 
   function addWish() {
@@ -1702,9 +1764,12 @@
     const d = rt.draft.swap;
     if (!d.hrid) return;
     const enh = Number(d.enh) || 0;
-    const stock = invQty(d.hrid, enh);
+    const loc = d.loc || INV_LOC;
+    const stock = locQty(d.hrid, enh, loc);
     const all = !!d.all;
-    const same = function (s) { return s.hrid === d.hrid && s.enh === enh; };
+    const same = function (s) {
+      return s.hrid === d.hrid && s.enh === enh && (s.loc || INV_LOC) === loc;
+    };
 
     if (all) {
       if (stock <= 0) return;
@@ -1715,18 +1780,18 @@
         state.swaps = state.swaps.filter(function (s) { return s === keep || !same(s); });
       } else {
         state.swaps = state.swaps.filter(function (s) { return !same(s); });
-        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true });
+        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true, loc: loc });
       }
       resetDraft('swap');
       saveState(); render();
       return;
     }
 
-    const assigned = swapAssigned(d.hrid, enh);
+    const assigned = swapAssigned(d.hrid, enh, loc);
     const max = Math.max(0, stock - assigned);
     if (max <= 0) return;
     const qty = Math.min(max, Math.max(1, Math.floor(Number(d.qty) || 1)));
-    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false });
+    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false, loc: loc });
     resetDraft('swap');
     saveState(); render();
   }
@@ -2146,7 +2211,7 @@
       .mwi-table { width: 100%; overflow-x: auto; }
       .mwi-tr { display: grid; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid #2a3247; min-width: 0; }
       .mwi-wish-tr { grid-template-columns: 42px 32px 46px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
-      .mwi-swap-tr { grid-template-columns: 32px 78px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
+      .mwi-swap-tr { grid-template-columns: 32px 104px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
       .mwi-th { color: #8f9ab3; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #2f3850; }
       .mwi-tr .num { text-align: right; white-space: nowrap; }
       .mwi-item { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; }
