@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.7.0
+// @version      0.7.5
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -478,7 +478,6 @@
 
   function buildCatalog(itemDetailMap) {
     const out = {};
-    let n = 0;
     for (const hrid in itemDetailMap) {
       if (hrid.indexOf('/items/') !== 0) continue;
       const it = itemDetailMap[hrid];
@@ -492,12 +491,10 @@
         category: it.categoryHrid || '',
         icon: hrid.replace('/items/', '')
       };
-      n++;
     }
     try {
       writeStore(CATALOG_KEY, { ts: Date.now(), data: out });
     } catch (e) { /* 容量不足就算了 */ }
-    console.log('[攒钱] 物品目录已加载：' + n + ' 条');
     return out;
   }
 
@@ -506,7 +503,6 @@
     if (!ls) return null;
     const raw = ls.getItem('initClientData');
     if (!raw) return null;
-    console.log('[攒钱] initClientData：' + raw.length + ' 字符');
     let obj = null;
     try {
       const json = decompressFromUTF16(raw);
@@ -530,7 +526,6 @@
     } else if (!rt.catalog) {
       rt.catalogSource = 'none';
     }
-    console.log('[攒钱] 目录：' + (rt.catalog ? Object.keys(rt.catalog).length + ' 条（' + rt.catalogSource + '）' : '未加载'));
     if (needsNames()) loadNames(false);
     scheduleRender();
   }
@@ -578,7 +573,6 @@
         if (Object.keys(map).length) {
           rt.names = map;
           try { writeStore(NAMES_KEY, { ts: Date.now(), data: map }); } catch (e) { /* 容量 */ }
-          console.log('[攒钱] 中文名已加载：' + Object.keys(map).length + ' 条');
         }
         lastErr = null;
         break;
@@ -654,24 +648,154 @@
     return null;
   }
 
+  function isItemStack(it) {
+    if (!it || typeof it !== 'object') return false;
+    const hrid = it.itemHrid || it.hrid;
+    if (!hrid || hrid.indexOf('/items/') !== 0) return false;
+    const q = Number(it.count != null ? it.count : it.quantity);
+    return isFinite(q) && q > 0;
+  }
+
+  function stackLoc(it, key) {
+    const raw = it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location;
+    if (raw) return raw;
+    if (/listing|market/i.test(key) && !/order/i.test(key)) return MARKET_LOC;
+    if (/equipment|equip|tool|head|body|legs|feet|hands|neck|ring|earrings|back|trinket|pouch|charm/i.test(key)) return EQUIP_LOC;
+    if (/characterItems|inventory/i.test(key)) return INV_LOC;
+    return null;
+  }
+
+  function pushStateItem(out, seen, it, key) {
+    if (!isItemStack(it)) return;
+    const loc = stackLoc(it, key);
+    if (!loc) return;
+    const hrid = it.itemHrid || it.hrid;
+    const uid = it.id || it.hash;
+    const dedupe = uid || (hrid + '|' + (it.enhancementLevel || 0) + '|' + loc + '|' +
+      (it.count != null ? it.count : it.quantity));
+    if (seen[dedupe]) return;
+    seen[dedupe] = true;
+    if (it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location) {
+      out.push(it);
+    } else {
+      const copy = Object.assign({}, it);
+      copy.itemLocationHrid = loc;
+      out.push(copy);
+    }
+  }
+
+  function readMyMarketListings(st) {
+    const raw = st.myMarketListingMap;
+    if (!raw) return [];
+    const out = [];
+    const seen = {};
+
+    function firstNumber() {
+      for (let i = 0; i < arguments.length; i++) {
+        const n = Number(arguments[i]);
+        if (isFinite(n)) return n;
+      }
+      return null;
+    }
+
+    function walk(obj, depth) {
+      if (!obj || typeof obj !== 'object' || depth < 0) return;
+      if (Array.isArray(obj) || typeof obj.values === 'function') {
+        const vals = asArray(obj) || [];
+        for (let i = 0; i < vals.length; i++) walk(vals[i], depth - 1);
+        return;
+      }
+      const hrid = obj.itemHrid || (obj.item && (obj.item.itemHrid || obj.item.hrid)) || obj.hrid;
+      if (hrid && hrid.indexOf('/items/') === 0) {
+        if (obj.isBuy === true) return;
+        let qty = firstNumber(obj.quantity, obj.count, obj.amount, obj.remainingQuantity, obj.remaining, obj.qty);
+        const filled = firstNumber(obj.filledQuantity, obj.quantityFilled, obj.filled);
+        if (qty == null) qty = 1;
+        if (filled != null && filled > 0 && qty > filled) qty -= filled;
+        if (!(qty > 0)) return;
+        const enh = Number(obj.enhancementLevel || obj.enhancement || 0) || 0;
+        const id = obj.id || obj.hash || (hrid + '|' + enh + '|' + qty + '|' + (obj.price || ''));
+        if (seen[id]) return;
+        seen[id] = true;
+        out.push({
+          id: id,
+          itemHrid: hrid,
+          count: qty,
+          enhancementLevel: enh,
+          itemLocationHrid: MARKET_LOC
+        });
+        return;
+      }
+      const keys = Object.keys(obj);
+      for (let i = 0; i < keys.length; i++) {
+        if (/order/i.test(keys[i])) continue;
+        walk(obj[keys[i]], depth - 1);
+      }
+    }
+
+    walk(raw, 3);
+    return out;
+  }
+
+  function readStateItems(st) {
+    const out = [];
+    const seen = {};
+    const seenObjs = new WeakSet();
+    const skipKey = /Detail|Dict|Table|Translations|Requirement|Experience|Category|Type|Config|gameConn|disconnect|captcha|reconnect|isLoading|versionTimestamp/i;
+    const keys = Object.keys(st);
+
+    function collectNested(obj, key, depth) {
+      if (!obj || typeof obj !== 'object' || depth < 0 || seenObjs.has(obj)) return;
+      seenObjs.add(obj);
+      if (isItemStack(obj)) {
+        pushStateItem(out, seen, obj, key);
+        return;
+      }
+      if (Array.isArray(obj) || typeof obj.values === 'function') {
+        const vals = asArray(obj) || [];
+        for (let i = 0; i < vals.length; i++) collectNested(vals[i], key, depth - 1);
+        return;
+      }
+      const subKeys = Object.keys(obj);
+      for (let i = 0; i < subKeys.length; i++) {
+        const sub = subKeys[i];
+        if (skipKey.test(sub)) continue;
+        if (/order/i.test(key + '.' + sub)) continue;
+        collectNested(obj[sub], key + '.' + sub, depth - 1);
+      }
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (skipKey.test(key)) continue;
+      const raw = st[key];
+      if (!raw || typeof raw !== 'object') continue;
+      let arr = null;
+      if (Array.isArray(raw) || typeof raw.values === 'function') arr = asArray(raw);
+      else arr = Object.values(raw);
+      if (arr) {
+        for (let j = 0; j < arr.length; j++) pushStateItem(out, seen, arr[j], key);
+      }
+    }
+    collectNested(st, '', 3);
+    const listings = readMyMarketListings(st);
+    for (let i = 0; i < listings.length; i++) {
+      pushStateItem(out, seen, listings[i], 'myMarketListingMap');
+    }
+    return out;
+  }
+
   function readLiveItems() {
     const states = [
       pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
       pageWin.game && pageWin.game.state,
       pageWin.__game && pageWin.__game.state
     ];
-    const fields = ['characterItems', 'characterItemMap', 'characterItemsMap', 'items', 'inventory'];
     for (let i = 0; i < states.length; i++) {
       const st = states[i];
       if (!st) continue;
-      for (let j = 0; j < fields.length; j++) {
-        const arr = asArray(st[fields[j]]);
-        if (arr && arr.length && arr.some(function (it) {
-          return it && (it.itemHrid || it.hrid) && (it.count != null || it.quantity != null);
-        })) {
-          return arr;
-        }
-      }
+      const items = readStateItems(st);
+      if (items.length) return items;
     }
     return null;
   }
@@ -750,23 +874,30 @@
     return it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location || INV_LOC;
   }
 
+  function isEquipLoc(loc) {
+    if (!loc) return false;
+    if (loc === INV_LOC) return false;
+    if (loc.indexOf('/item_locations/market') === 0) return false;
+    if (loc.indexOf('/item_locations/house') === 0) return false;
+    if (loc.indexOf('/item_locations/skills') === 0) return false;
+    return loc.indexOf('/item_locations/') === 0;
+  }
+
   function isSwapLoc(loc) {
     if (!loc) return false;
-    return loc === INV_LOC ||
-      loc.indexOf('/item_locations/equipment') === 0 ||
-      loc.indexOf('/item_locations/market') === 0;
+    return loc === INV_LOC || loc.indexOf('/item_locations/market') === 0 || isEquipLoc(loc);
   }
 
   function locLabel(loc) {
     if (!loc || loc === INV_LOC) return '库存';
-    if (loc.indexOf('/item_locations/equipment') === 0) return '装备';
     if (loc.indexOf('/item_locations/market') === 0) return '市场';
+    if (isEquipLoc(loc)) return '装备';
     return '其他';
   }
 
   function locRank(loc) {
     if (!loc || loc === INV_LOC) return 0;
-    if (loc.indexOf('/item_locations/equipment') === 0) return 1;
+    if (isEquipLoc(loc)) return 1;
     if (loc.indexOf('/item_locations/market') === 0) return 2;
     return 3;
   }
@@ -882,46 +1013,6 @@
     return found ? sum : null;
   }
 
-  function itemsHaveCoin(items) {
-    return sumCoin(items) != null;
-  }
-
-  function goldDebugText() {
-    const out = [];
-    const states = [
-      pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
-      pageWin.game && pageWin.game.state,
-      pageWin.__game && pageWin.__game.state
-    ];
-    const fields = ['characterItems', 'characterItemMap', 'characterItemsMap', 'items', 'inventory'];
-    for (let i = 0; i < states.length; i++) {
-      const st = states[i];
-      if (!st) continue;
-      try {
-        out.push('keys=' + Object.keys(st).slice(0, 25).join(','));
-      } catch (e) { /* ignore */ }
-      const chars = collectCharacterObjects(st);
-      for (let j = 0; j < chars.length && j < 3; j++) {
-        try {
-          out.push('char=' + Object.keys(chars[j]).slice(0, 20).join(','));
-        } catch (e) { /* ignore */ }
-      }
-      for (let j = 0; j < fields.length; j++) {
-        const arr = asArray(st[fields[j]]);
-        if (!arr) continue;
-        for (let k = 0; k < arr.length; k++) {
-          const it = arr[k];
-          if (!it) continue;
-          const hrid = it.itemHrid || it.hrid;
-          if (hrid !== '/items/coin') continue;
-          out.push('coin=' + (it.count != null ? it.count : it.quantity) +
-            '@' + itemLoc(it));
-        }
-      }
-    }
-    return out.join(' ; ');
-  }
-
   let noticeTimer = null;
   function showNotice(msg) {
     rt.notice = msg;
@@ -948,7 +1039,6 @@
         const picked = chooseLiveGold(candidates, oldGold);
         const goldChanged = !!(picked && picked.value !== oldGold);
         const hasCoin = itemCoin != null;
-        const candText = candidates.map(function (c) { return c.source + ':' + c.value; }).join(' | ');
         if (items && items.length) {
           setInventory(items);
           if (picked) {
@@ -958,15 +1048,9 @@
           }
           const goldNote = picked ? (goldChanged ? '，金币已更新' : '') : (!hasCoin ? '，金币未读取到，保留原值' : '');
           showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
-          console.log('[攒钱] 刷新库存：实时=' + !!live + '，金币=' + rt.gold +
-            '（' + (picked ? picked.source : (hasCoin ? '库存金币' : '保留原值')) + '）' +
-            '，候选=' + (candText || '无') +
-            '，诊断=' + goldDebugText());
         } else if (picked) {
           rt.gold = picked.value;
           showNotice('金币已刷新（实时），但未读取到库存');
-          console.log('[攒钱] 刷新库存：仅更新金币 ' + rt.gold +
-            '（' + picked.source + '），候选=' + (candText || '无'));
         } else {
           showNotice('未读取到库存，请刷新页面后重试');
         }
@@ -980,7 +1064,6 @@
   }
 
   function onCharacterSwitch() {
-    console.log('[攒钱] 检测到角色切换，收起面板并重新挂载页签');
     hideOwnTab();
     if (rt.tab && rt.tab.parentElement) rt.tab.parentElement.removeChild(rt.tab);
     rt.tab = null;
@@ -1062,11 +1145,6 @@
     rt.gold = gold;
     rt.inventoryAt = Date.now();
     syncAllSwaps();
-    const locCounts = {};
-    for (let i = 0; i < list.length; i++) {
-      locCounts[list[i].loc] = (locCounts[list[i].loc] || 0) + 1;
-    }
-    console.log('[攒钱] 库存已读取：' + list.length + ' 条，金币 ' + gold + '，位置 ' + JSON.stringify(locCounts));
     scheduleRender();
   }
 
@@ -1429,7 +1507,6 @@
       pending =
         '<div class="mwi-pending">' + icon(d.hrid) +
         '<b>' + esc(displayName(d.hrid, d.enh)) + '</b>' +
-        (loc !== INV_LOC ? '<span class="mwi-tag">' + locLabel(loc) + '</span>' : '') +
         '<span class="mwi-dim" title="' + locLabel(loc) + ' ' + stock + '">' +
           locLabel(loc) + ' ' + fmtQty(shown) + '</span>' +
         '<label>数量 <input class="mwi-input" style="width:64px" type="number" min="1" max="' + Math.max(1, shown) +
@@ -1479,8 +1556,7 @@
     return shown.map(function (e) {
       const it = rt.catalog && rt.catalog[e.hrid];
       const lab = isLabyrinth(e.hrid, it && it.category);
-      const tags = (e.loc !== INV_LOC ? '<span class="mwi-tag">' + locLabel(e.loc) + '</span>' : '') +
-        (lab ? '<span class="mwi-tag">迷宫</span>' : '') +
+      const tags = (lab ? '<span class="mwi-tag">迷宫</span>' : '') +
         (it && !it.tradable ? '<span class="mwi-tag warn">不可交易</span>' : '');
       return '<div class="mwi-result" data-act="select-swap" data-hrid="' + esc(e.hrid) +
         '" data-enh="' + e.enh + '" data-loc="' + esc(e.loc) + '" data-name="' + esc(displayName(e.hrid, e.enh)) + '">' +
@@ -1513,7 +1589,6 @@
           '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（' + locLabel(loc) + ' ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
           '<span class="num" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + (s.all ? '，全部' : '') + '）') + '">' +
             fmtQty(s.qty) + (s.all ? '<span class="mwi-tag">全部</span>' : '') +
-            (loc !== INV_LOC ? '<span class="mwi-tag">' + locLabel(loc) + '</span>' : '') +
           '</span>' +
           '<span class="num">' + (ask == null ? '—' : fmt(ask)) + '</span>' +
           '<span class="num">' + (bid == null ? '—' : fmt(bid)) + '</span>' +
@@ -1986,7 +2061,6 @@
       applyTabStyle(tab, st.normal);
       placeOwnTab(list, tab);
       rt.tab = tab;
-      console.log('[攒钱] 页签已注入');
     } else {
       placeOwnTab(list, rt.tab);
       applyTabStyle(rt.tab, (rt.overlay && rt.overlay.style.display !== 'none') ? st.active : st.normal);
@@ -2211,7 +2285,7 @@
       .mwi-table { width: 100%; overflow-x: auto; }
       .mwi-tr { display: grid; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid #2a3247; min-width: 0; }
       .mwi-wish-tr { grid-template-columns: 42px 32px 46px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
-      .mwi-swap-tr { grid-template-columns: 32px 104px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
+      .mwi-swap-tr { grid-template-columns: 32px 86px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
       .mwi-th { color: #8f9ab3; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #2f3850; }
       .mwi-tr .num { text-align: right; white-space: nowrap; }
       .mwi-item { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; }
@@ -2347,6 +2421,12 @@
     setTimeout(function () {
       if (!rt.names && needsNames()) loadNames(false);
     }, 1500);
+    setTimeout(function () {
+      try {
+        const live = readLiveItems();
+        if (live && live.length && live.length > rt.inventory.length) setInventory(live);
+      } catch (e) { /* ignore */ }
+    }, 3000);
     ensureMarket(false);
     ensureUI();
     setInterval(ensureUI, 1000);
@@ -2372,7 +2452,6 @@
       const boxes = rt.overlay.querySelectorAll('.mwi-results');
       for (let i = 0; i < boxes.length; i++) boxes[i].hidden = true;
     });
-    console.log('[攒钱] 脚本已加载');
   }
 
   hookWS();
