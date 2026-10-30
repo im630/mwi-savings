@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.7.6
+// @version      0.7.7
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -297,6 +297,7 @@
     loadingMarket: false,
     lastError: '',
     modal: null,
+    priceEdit: null,
     tab: null,
     tablist: null,
     panelId: null,
@@ -357,6 +358,25 @@
     if (abs >= 1e6) return trim((n / 1e6).toFixed(2)) + 'M';
     if (abs >= 1e3) return trim((n / 1e3).toFixed(2)) + 'K';
     return String(Math.round(n));
+  }
+
+  function customPriceOf(entry) {
+    const n = Number(entry && entry.customPrice);
+    return isFinite(n) && n > 0 ? n : null;
+  }
+
+  function priceCellHtml(kind, entry, basisValue) {
+    const editing = rt.priceEdit && rt.priceEdit.kind === kind && rt.priceEdit.id === entry.id;
+    if (editing) {
+      return '<input class="mwi-input mwi-price-input" type="number" min="0" step="1" ' +
+        'data-role="price-input" data-kind="' + kind + '" data-id="' + esc(entry.id) + '" ' +
+        'value="' + esc(rt.priceEdit.value) + '" placeholder="自定义" autofocus>';
+    }
+    const custom = customPriceOf(entry);
+    return '<button class="mwi-price-btn" data-act="edit-price" data-kind="' + kind +
+      '" data-id="' + esc(entry.id) + '" title="' +
+      esc(custom ? fmt(custom) + '（自定义，点击修改）' : '点击设置自定义价格') + '">' +
+      (custom == null ? '自定' : fmt(custom)) + '</button>';
   }
 
   function pct(x) {
@@ -434,6 +454,7 @@
         return arr.filter(function (x) { return x && x.hrid; }).map(function (x) {
           const all = keepAll ? !!x.all : false;
           const loc = keepAll ? (isSwapLoc(x.loc) ? x.loc : INV_LOC) : undefined;
+          const cp = Number(x.customPrice);
           let qty = Math.floor(Number(x.qty));
           if (!isFinite(qty)) qty = all ? 0 : 1;
           if (qty < 0) qty = 0;
@@ -444,7 +465,8 @@
             enh: Number(x.enh) || 0,
             qty: qty,
             all: keepAll ? all : undefined,
-            loc: loc
+            loc: loc,
+            customPrice: isFinite(cp) && cp > 0 ? cp : null
           };
         });
       }
@@ -1069,6 +1091,7 @@
 
   function onCharacterSwitch() {
     hideOwnTab();
+    rt.priceEdit = null;
     if (rt.tab && rt.tab.parentElement) rt.tab.parentElement.removeChild(rt.tab);
     rt.tab = null;
     rt.tablist = null;
@@ -1296,7 +1319,8 @@
     let swapsValue = 0;
     for (let i = 0; i < state.swaps.length; i++) {
       const s = state.swaps[i];
-      const p = pickPrice(rt.market, s.hrid, s.enh, state.settings.swapBasis);
+      const custom = customPriceOf(s);
+      const p = custom != null ? { value: custom, exact: true } : pickPrice(rt.market, s.hrid, s.enh, state.settings.swapBasis);
       swapsValue += (p.value || 0) * s.qty * (1 - SWAP_TAX);
     }
 
@@ -1315,7 +1339,9 @@
       const q = rt.market && rt.market[w.hrid] && rt.market[w.hrid][String(w.enh)];
       const ask = q && q.a > 0 ? q.a : null;
       const bid = q && q.b > 0 ? q.b : null;
-      const pick = pickPrice(rt.market, w.hrid, w.enh, state.settings.wishBasis);
+      const marketPick = pickPrice(rt.market, w.hrid, w.enh, state.settings.wishBasis);
+      const custom = customPriceOf(w);
+      const pick = custom != null ? { value: custom, exact: true } : marketPick;
 
       if (pick.value == null) {
         unpriced++;
@@ -1324,7 +1350,8 @@
           owned: owned, need: need, ask: ask, bid: bid,
           unit: null, unitApprox: false, cost: 0, funded: 0,
           progress: w.qty > 0 ? Math.min(1, owned / w.qty) : 1,
-          gap: null, unpriced: true
+          gap: null, unpriced: true,
+          customPrice: custom, basisValue: marketPick.value
         };
       }
 
@@ -1339,9 +1366,10 @@
       return {
         id: w.id, hrid: w.hrid, enh: w.enh, qty: w.qty,
         owned: owned, need: need, ask: ask, bid: bid,
-        unit: unit, unitApprox: !pick.exact, cost: cost, funded: funded,
+        unit: unit, unitApprox: custom == null && !pick.exact, cost: cost, funded: funded,
         progress: w.qty > 0 ? Math.min(1, (owned + funded / unit) / w.qty) : 1,
-        gap: cost - funded, unpriced: false
+        gap: cost - funded, unpriced: false,
+        customPrice: custom, basisValue: marketPick.value
       };
     });
 
@@ -1378,7 +1406,7 @@
               '<button class="mwi-btn" data-act="refresh-inventory"' + (rt.inventoryLoading ? ' disabled' : '') + '>' +
                 (rt.inventoryLoading ? '刷新中…' : '刷新库存') + '</button>' +
             '</div>' +
-            '<div class="mwi-title">攒钱</div>' +
+            '<div class="mwi-title">攒钱计划</div>' +
             '<div class="mwi-actions">' +
               '<button class="mwi-btn danger" data-act="clear">清空</button>' +
             '</div>' +
@@ -1472,7 +1500,7 @@
       '<div class="mwi-table">' +
       '<div class="mwi-tr mwi-wish-tr mwi-th">' +
         '<span>#</span><span>物品</span><span class="num">数量</span>' +
-        '<span class="num">卖价</span><span class="num">买价</span><span class="num">小计</span><span></span>' +
+        '<span class="num">卖价</span><span class="num">买价</span><span class="num">自定义</span><span class="num">小计</span><span></span>' +
       '</div>' +
       ev.rows.map(function (r, i) {
         const sell = r.ask == null ? '—' : fmt(r.ask);
@@ -1489,6 +1517,7 @@
           '<span class="num">' + r.qty + '</span>' +
           '<span class="num">' + sell + '</span>' +
           '<span class="num">' + buy + '</span>' +
+          '<span class="num mwi-price">' + priceCellHtml('wish', { id: r.id, customPrice: r.customPrice }, r.basisValue) + '</span>' +
           '<span class="num">' + subtotal + '</span>' +
           '<span class="mwi-op"><button class="mwi-btn danger mwi-del" data-act="del-wish" data-id="' + esc(r.id) + '">删除</button></span>' +
         '</div>';
@@ -1579,13 +1608,14 @@
       '<div class="mwi-table">' +
       '<div class="mwi-tr mwi-swap-tr mwi-th">' +
         '<span>物品</span><span class="num">数量</span><span class="num">卖价</span>' +
-        '<span class="num">买价</span><span class="num">税后小计</span><span></span>' +
+        '<span class="num">买价</span><span class="num">自定义</span><span class="num">税后小计</span><span></span>' +
       '</div>' +
       state.swaps.map(function (s) {
         const q = rt.market && rt.market[s.hrid] && rt.market[s.hrid][String(s.enh)];
         const ask = q && q.a > 0 ? q.a : null;
         const bid = q && q.b > 0 ? q.b : null;
-        const p = pickPrice(rt.market, s.hrid, s.enh, state.settings.swapBasis);
+        const custom = customPriceOf(s);
+        const p = custom != null ? { value: custom, exact: true } : pickPrice(rt.market, s.hrid, s.enh, state.settings.swapBasis);
         const subtotal = p.value == null ? '—' : fmt(p.value * s.qty * swapTaxFactor);
         const loc = s.loc || INV_LOC;
         const stock = locQty(s.hrid, s.enh, loc);
@@ -1596,6 +1626,7 @@
           '</span>' +
           '<span class="num">' + (ask == null ? '—' : fmt(ask)) + '</span>' +
           '<span class="num">' + (bid == null ? '—' : fmt(bid)) + '</span>' +
+          '<span class="num mwi-price">' + priceCellHtml('swap', s, p.value) + '</span>' +
           '<span class="num">' + subtotal + '</span>' +
           '<span class="mwi-op"><button class="mwi-btn danger mwi-del" data-act="del-swap" data-id="' + esc(s.id) + '">删除</button></span>' +
         '</div>';
@@ -1655,7 +1686,7 @@
           '<div class="mwi-progress"><i style="width:' + (r.progress * 100).toFixed(1) + '%"></i></div>' +
           '<div class="mwi-dim">已攒 ' + pct(r.progress) +
             ' · 还差 ' + (r.gap == null ? '—' : fmt(r.gap)) +
-            ' · 成本 ' + (r.cost ? fmt(r.cost) : '—') +
+            ' · 成本 ' + (r.cost ? fmt(r.cost) : '—') + (r.customPrice ? '（自定）' : '') +
             ' · 已拥有 ' + r.owned + '/' + r.qty + '</div>' +
         '</div>' +
       '</div>';
@@ -1681,6 +1712,8 @@
     ov.addEventListener('input', onInput);
     ov.addEventListener('change', onChange);
     ov.addEventListener('focusin', onFocusIn);
+    ov.addEventListener('focusout', onFocusOut);
+    ov.addEventListener('keydown', onKeyDown);
   }
 
   function onClick(e) {
@@ -1694,12 +1727,34 @@
     const act = el.dataset.act;
 
     if (act === 'sheet') {
+      rt.priceEdit = null;
       state.ui.sheet = el.dataset.sheet;
       saveState(); render(); return;
     }
     if (act === 'basis') {
+      rt.priceEdit = null;
       state.settings[el.dataset.kind === 'wish' ? 'wishBasis' : 'swapBasis'] = el.dataset.basis;
       saveState(); render(); return;
+    }
+    if (act === 'edit-price') {
+      const kind = el.dataset.kind;
+      const arr = kind === 'wish' ? state.wishes : state.swaps;
+      const entry = arr.find(function (x) { return x.id === el.dataset.id; });
+      if (!entry) return;
+      const basis = kind === 'wish' ? state.settings.wishBasis : state.settings.swapBasis;
+      const p = pickPrice(rt.market, entry.hrid, entry.enh, basis);
+      const custom = customPriceOf(entry);
+      rt.priceEdit = {
+        kind: kind,
+        id: entry.id,
+        value: String(custom != null ? custom : (p.value != null ? Math.round(p.value) : ''))
+      };
+      render();
+      setTimeout(function () {
+        const inp = rt.overlay && rt.overlay.querySelector('[data-role="price-input"]');
+        if (inp) { inp.focus(); inp.select(); }
+      }, 0);
+      return;
     }
     if (act === 'refresh') {
       ensureMarket(true); return;
@@ -1714,6 +1769,7 @@
       rt.modal = null; render(); return;
     }
     if (act === 'confirm-clear') {
+      rt.priceEdit = null;
       state.wishes = [];
       state.swaps = [];
       rt.modal = null;
@@ -1740,6 +1796,7 @@
       moveWish(el.dataset.id, 1); return;
     }
     if (act === 'del-wish') {
+      if (rt.priceEdit && rt.priceEdit.id === el.dataset.id) rt.priceEdit = null;
       state.wishes = state.wishes.filter(function (w) { return w.id !== el.dataset.id; });
       saveState(); render(); return;
     }
@@ -1760,6 +1817,7 @@
       render(); return;
     }
     if (act === 'del-swap') {
+      if (rt.priceEdit && rt.priceEdit.id === el.dataset.id) rt.priceEdit = null;
       state.swaps = state.swaps.filter(function (s) { return s.id !== el.dataset.id; });
       saveState(); render(); return;
     }
@@ -1780,7 +1838,22 @@
       rt.draft.wish.enh = e.target.value;
     } else if (role === 'swap-qty') {
       rt.draft.swap.qty = e.target.value;
+    } else if (role === 'price-input') {
+      if (rt.priceEdit) rt.priceEdit.value = e.target.value;
     }
+  }
+
+  function commitPriceEdit() {
+    if (!rt.priceEdit) return;
+    const edit = rt.priceEdit;
+    rt.priceEdit = null;
+    const arr = edit.kind === 'wish' ? state.wishes : state.swaps;
+    const entry = arr.find(function (x) { return x.id === edit.id; });
+    if (!entry) { render(); return; }
+    const n = Number(edit.value);
+    entry.customPrice = isFinite(n) && n > 0 ? Math.floor(n) : null;
+    saveState();
+    setTimeout(render, 0);
   }
 
   function onChange(e) {
@@ -1799,6 +1872,9 @@
       d.all = !!e.target.checked;
       if (d.all && d.hrid) d.qty = locQty(d.hrid, d.enh, d.loc || INV_LOC);
       render();
+    } else if (role === 'price-input') {
+      if (rt.priceEdit) rt.priceEdit.value = e.target.value;
+      commitPriceEdit();
     }
   }
 
@@ -1810,6 +1886,28 @@
     if (!box) return;
     box.hidden = false;
     box.innerHTML = kind === 'wish' ? wishResultsHtml() : swapResultsHtml();
+  }
+
+  function onKeyDown(e) {
+    const role = e.target.dataset ? e.target.dataset.role : '';
+    if (role !== 'price-input') return;
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (rt.priceEdit) rt.priceEdit.value = e.target.value;
+      commitPriceEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      rt.priceEdit = null;
+      render();
+    }
+  }
+
+  function onFocusOut(e) {
+    const role = e.target.dataset ? e.target.dataset.role : '';
+    if (role !== 'price-input' || !rt.priceEdit) return;
+    rt.priceEdit.value = e.target.value;
+    commitPriceEdit();
   }
 
   function renderResultsOnly(kind) {
@@ -1834,7 +1932,7 @@
     const qty = Math.max(1, Math.floor(Number(d.qty) || 1));
     const ex = state.wishes.find(function (w) { return w.hrid === d.hrid && w.enh === enh; });
     if (ex) ex.qty += qty;
-    else state.wishes.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty });
+    else state.wishes.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, customPrice: null });
     resetDraft('wish');
     saveState(); render();
   }
@@ -1859,7 +1957,7 @@
         state.swaps = state.swaps.filter(function (s) { return s === keep || !same(s); });
       } else {
         state.swaps = state.swaps.filter(function (s) { return !same(s); });
-        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true, loc: loc });
+        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true, loc: loc, customPrice: null });
       }
       resetDraft('swap');
       saveState(); render();
@@ -1870,7 +1968,7 @@
     const max = Math.max(0, stock - assigned);
     if (max <= 0) return;
     const qty = Math.min(max, Math.max(1, Math.floor(Number(d.qty) || 1)));
-    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false, loc: loc });
+    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false, loc: loc, customPrice: null });
     resetDraft('swap');
     saveState(); render();
   }
@@ -2286,10 +2384,16 @@
       .mwi-icon-ph { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: #2e3a52; border-radius: 3px; font-size: 11px; }
       .mwi-pending { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 7px; font-size: 12px; }
       .mwi-check { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+      .mwi-price { overflow: hidden; }
+      .mwi-price-btn { display: block; width: 100%; height: 18px; padding: 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #3d4e70; border-radius: 3px; background: #2b3852; color: #cfe0ff; font-family: inherit; font-size: 11px; cursor: pointer; box-sizing: border-box; }
+      .mwi-price-btn:hover { background: #3d5178; color: #ffe08a; }
+      .mwi-price-input { width: 100%; height: 18px; padding: 0 2px; font-size: 11px; -moz-appearance: textfield; appearance: textfield; box-sizing: border-box; }
+      .mwi-price-input::-webkit-outer-spin-button,
+      .mwi-price-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
       .mwi-table { width: 100%; overflow-x: auto; }
       .mwi-tr { display: grid; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid #2a3247; min-width: 0; }
-      .mwi-wish-tr { grid-template-columns: 42px 32px 46px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
-      .mwi-swap-tr { grid-template-columns: 32px 86px minmax(56px, 1fr) minmax(56px, 1fr) minmax(56px, 1fr) 46px; }
+      .mwi-wish-tr { grid-template-columns: 42px 32px 46px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
+      .mwi-swap-tr { grid-template-columns: 32px 86px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
       .mwi-th { color: #8f9ab3; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #2f3850; }
       .mwi-tr .num { text-align: right; white-space: nowrap; }
       .mwi-item { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; }
