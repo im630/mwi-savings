@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.7.5
+// @version      0.7.6
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
 // @homepage     https://github.com/im630/mwi-savings
-// @downloadURL  https://raw.githubusercontent.com/im630/mwi-savings/main/mwi-savings.user.js
-// @updateURL    https://raw.githubusercontent.com/im630/mwi-savings/main/mwi-savings.user.js
+// @downloadURL  https://www.tampermonkey.net/script_installation.php#url=https://js.nainai.eu.org/proxy/https://update.greasyfork.org/scripts/602635/%E9%93%B6%E6%B2%B3%E5%A5%B6%E7%89%9B%20%C2%B7%20%E6%94%92%E9%92%B1%E8%AE%A1%E5%88%92.user.js
+// @updateURL    https://www.tampermonkey.net/script_installation.php#url=https://js.nainai.eu.org/proxy/https://update.greasyfork.org/scripts/602635/%E9%93%B6%E6%B2%B3%E5%A5%B6%E7%89%9B%20%C2%B7%20%E6%94%92%E9%92%B1%E8%AE%A1%E5%88%92.user.js
 // @match        https://www.milkywayidle.com/*
 // @match        https://test.milkywayidle.com/*
 // @match        https://www.milkywayidlecn.com/*
@@ -18,7 +18,9 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      cdn.jsdelivr.net
-// @connect      unpkg.com
+// @connect      cdn.jsdelivr.net.cn
+// @connect      fastly.jsdelivr.net
+// @connect      gcore.jsdelivr.net
 // @noframes
 // ==/UserScript==
 
@@ -201,8 +203,10 @@
   const SWAP_TAX = 0.04;
   const NAMES_KEY = 'mwi.savings.names.v1';
   const NAMES_URLS = [
-    'https://cdn.jsdelivr.net/npm/@c3d.gg/mwi-types@1.5.1/dist/domains/items/items.json',
-    'https://unpkg.com/@c3d.gg/mwi-types@1.5.1/dist/domains/items/items.json'
+    'https://cdn.jsdelivr.net.cn/npm/@c3d.gg/mwi-types@1.5.1/dist/domains/items/items.json',
+    'https://fastly.jsdelivr.net/npm/@c3d.gg/mwi-types@1.5.1/dist/domains/items/items.json',
+    'https://gcore.jsdelivr.net/npm/@c3d.gg/mwi-types@1.5.1/dist/domains/items/items.json',
+    'https://cdn.jsdelivr.net/npm/@c3d.gg/mwi-types@1.5.1/dist/domains/items/items.json'
   ];
   const NAMES_TTL = 30 * 24 * 60 * 60 * 1000;
   const INV_LOC = '/item_locations/inventory';
