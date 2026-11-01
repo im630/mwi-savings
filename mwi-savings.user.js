@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.7.7
+// @version      0.8.0
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -214,6 +214,129 @@
   const MARKET_LOC = '/item_locations/market';
   const LOCATIONS = ['库存', '技能', '装备', '房屋', 'Inventory', 'Skills', 'Equipment', 'House'];
 
+  const LIFE_TYPE_META = {
+    '/action_types/milking': { label: '挤奶', order: 1 },
+    '/action_types/foraging': { label: '采摘', order: 2 },
+    '/action_types/woodcutting': { label: '伐木', order: 3 },
+    '/action_types/cheesesmithing': { label: '锻造', order: 4 },
+    '/action_types/crafting': { label: '制作', order: 5 },
+    '/action_types/tailoring': { label: '缝纫', order: 6 },
+    '/action_types/cooking': { label: '烹饪', order: 7 },
+    '/action_types/brewing': { label: '冲泡', order: 8 }
+  };
+
+  const ALCHEMY_LIFE_META = {
+    '/actions/alchemy/coinify': { label: '点金', order: 9 },
+    '/actions/alchemy/transmute': { label: '转换', order: 10 },
+    '/actions/alchemy/decompose': { label: '分解', order: 11 }
+  };
+
+  const ACTION_ZH = {
+    'Coinify': '点金',
+    'Transmute': '转换',
+    'Decompose': '分解'
+  };
+
+  const COW_ZH = {
+    'Cow': '奶牛',
+    'Verdant Cow': '翠绿奶牛',
+    'Azure Cow': '蔚蓝奶牛',
+    'Burble Cow': '深紫奶牛',
+    'Crimson Cow': '深红奶牛',
+    'Unicow': '彩虹奶牛',
+    'Holy Cow': '圣牛'
+  };
+
+  const FORAGE_ZH = {
+    'farmland': '农场',
+    'shimmering lake': '波光湖',
+    'misty forest': '迷失森林',
+    'burble beach': '深紫沙滩',
+    'silly cow valley': '傻牛谷',
+    'olympus mons': '奥林匹斯山',
+    'asteroid belt': '小行星带'
+  };
+
+  const ZONE_ZH = {
+    'Smelly Planet': '臭臭星球',
+    'Swamp Planet': '沼泽星球',
+    'Aqua Planet': '海洋星球',
+    'Jungle Planet': '丛林星球',
+    'Gobo Planet': '哥布林星球',
+    'Planet Of The Eyes': '眼球星球',
+    "Sorcerer's Tower": '巫师之塔',
+    'Bear With It': '熊熊星球',
+    'Golem Cave': '魔像洞穴',
+    'Twilight Zone': '暮光之地',
+    'Infernal Abyss': '地狱深渊'
+  };
+
+  const DUNGEON_ZH = {
+    'Chimerical Den': '奇幻洞穴',
+    'Sinister Circus': '阴森马戏团',
+    'Enchanted Fortress': '秘法要塞',
+    'Pirate Cove': '海盗基地'
+  };
+
+  const MONSTER_ZH = {
+    'Fly': '苍蝇',
+    'Jerry': '杰瑞',
+    'Skunk': '臭鼬',
+    'Porcupine': '豪猪',
+    'Slimy': '史莱姆',
+    'Frogger': '青蛙',
+    'Thnake': '蛇',
+    'Swampy': '蜘蛛',
+    'Sherlock': '鳄鱼',
+    'Giant Shoebill': '大鲸头鹳',
+    'Gary': '蜗牛',
+    'I Pinch': '螃蟹',
+    'Aquahorse': '海马',
+    'Nom Nom': '鲫鱼',
+    'Turuto': '乌龟',
+    'Marine Huntress': '海洋猎手',
+    'Jungle Sprite': '丛林精灵',
+    'Myconid': '蘑菇人',
+    'Treant': '树人',
+    'Centaur Archer': '半人马弓箭手',
+    'Luna Empress': '月神蝴蝶',
+    'Stabby': '哥布林穿刺手',
+    'Slashy': '哥布林战士',
+    'Smashy': '哥布林大锤手',
+    'Shooty': '哥布林弓箭手',
+    'Boomy': '哥布林法师',
+    'Gobo Chieftain': '哥布林酋长',
+    'Eye': '独眼',
+    'Eyes': '竖眼',
+    'Veyes': '复眼',
+    'The Watcher': '观察者',
+    'Novice Sorcerer': '新手巫师',
+    'Ice Sorcerer': '冰霜巫师',
+    'Flame Sorcerer': '火焰巫师',
+    'Elementalist': '元素法师',
+    'Chronofrost Sorcerer': '时空霜巫',
+    'Gummy Bear': '果冻熊',
+    'Panda': '熊猫',
+    'Black Bear': '黑熊',
+    'Grizzly Bear': '灰熊',
+    'Polar Bear': '北极熊',
+    'Red Panda': '小熊猫',
+    'Magnetic Golem': '磁力魔像',
+    'Stalactite Golem': '钟乳石魔像',
+    'Granite Golem': '花岗岩魔像',
+    'Crystal Colossus': '水晶巨像',
+    'Zombie': '僵尸',
+    'Vampire': '吸血鬼',
+    'Werewolf': '狼人',
+    'Dusk Revenant': '黄昏亡灵',
+    'Abyssal Imp': '深渊小鬼',
+    'Soul Hunter': '灵魂猎手',
+    'Infernal Warlock': '地狱术士',
+    'Demonic Overlord': '恶魔霸主'
+  };
+
+  const MONSTER_DROPS = {"/monsters/abyssal_imp":["/items/red_tea_leaf","/items/emp_tea_leaf","/items/abyssal_essence","/items/quick_aid","/items/firestorm","/items/fireball","/items/large_treasure_chest"],"/monsters/acrobat":["/items/large_treasure_chest"],"/monsters/alligator":["/items/reptile_hide","/items/blueberry","/items/blackberry","/items/apple","/items/orange","/items/gator_vest","/items/swamp_essence","/items/scratch","/items/small_treasure_chest"],"/monsters/anchor_shark":["/items/large_treasure_chest"],"/monsters/aquahorse":["/items/orange","/items/plum","/items/pearl","/items/aqua_essence","/items/aqua_arrow","/items/small_treasure_chest"],"/monsters/black_bear":["/items/beast_hide","/items/mooberry","/items/marsberry","/items/spaceberry","/items/black_tea_leaf","/items/red_tea_leaf","/items/emp_tea_leaf","/items/black_bear_fluff","/items/bear_essence","/items/frenzy","/items/medium_treasure_chest"],"/monsters/brine_marksman":["/items/large_treasure_chest"],"/monsters/butterjerry":["/items/large_treasure_chest"],"/monsters/captain_fishhook":["/items/large_treasure_chest"],"/monsters/centaur_archer":["/items/beast_hide","/items/black_tea_leaf","/items/burble_tea_leaf","/items/amber","/items/centaur_hoof","/items/jungle_essence","/items/elusiveness","/items/rain_of_arrows","/items/quick_shot","/items/medium_treasure_chest"],"/monsters/chronofrost_sorcerer":["/items/sorcerers_sole","/items/chrono_sphere","/items/frost_sphere","/items/sorcerer_essence","/items/heal","/items/elemental_affinity","/items/frost_surge","/items/ice_spear","/items/mystic_aura","/items/orange_key_fragment","/items/basic_magic_charm","/items/advanced_magic_charm","/items/large_treasure_chest"],"/monsters/crab":["/items/orange","/items/plum","/items/crab_pincer","/items/aqua_essence","/items/smack","/items/small_treasure_chest"],"/monsters/crystal_colossus":["/items/garnet","/items/jade","/items/amethyst","/items/colossus_core","/items/golem_essence","/items/toughness","/items/spike_shell","/items/puncture","/items/impale","/items/invincible","/items/stone_key_fragment","/items/basic_defense_charm","/items/basic_melee_charm","/items/advanced_defense_charm","/items/advanced_melee_charm","/items/large_treasure_chest"],"/monsters/demonic_overlord":["/items/demonic_core","/items/abyssal_essence","/items/toughness","/items/firestorm","/items/flame_blast","/items/fireball","/items/mystic_aura","/items/burning_key_fragment","/items/basic_intelligence_charm","/items/basic_magic_charm","/items/advanced_intelligence_charm","/items/advanced_magic_charm","/items/large_treasure_chest"],"/monsters/deranged_jester":["/items/large_treasure_chest"],"/monsters/dodocamel":["/items/large_treasure_chest"],"/monsters/dusk_revenant":["/items/moonstone","/items/revenant_anima","/items/twilight_essence","/items/vampirism","/items/steady_shot","/items/silencing_shot","/items/rain_of_arrows","/items/critical_aura","/items/dark_key_fragment","/items/basic_attack_charm","/items/basic_ranged_charm","/items/advanced_attack_charm","/items/advanced_ranged_charm","/items/large_treasure_chest"],"/monsters/elementalist":["/items/dragon_fruit","/items/silk_fabric","/items/radiant_fiber","/items/sorcerers_sole","/items/tome_of_the_elements","/items/sorcerer_essence","/items/elemental_affinity","/items/ice_spear","/items/flame_blast","/items/revive","/items/large_treasure_chest"],"/monsters/enchanted_bishop":["/items/large_treasure_chest"],"/monsters/enchanted_king":["/items/large_treasure_chest"],"/monsters/enchanted_knight":["/items/large_treasure_chest"],"/monsters/enchanted_pawn":["/items/large_treasure_chest"],"/monsters/enchanted_queen":["/items/large_treasure_chest"],"/monsters/enchanted_rook":["/items/large_treasure_chest"],"/monsters/eye":["/items/azure_cheese","/items/burble_cheese","/items/crimson_cheese","/items/strawberry","/items/mooberry","/items/marsberry","/items/plum","/items/peach","/items/dragon_fruit","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/red_tea_leaf","/items/eyessence","/items/precision","/items/medium_treasure_chest"],"/monsters/eyes":["/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/red_tea_leaf","/items/goggles","/items/eyessence","/items/precision","/items/medium_treasure_chest"],"/monsters/flame_sorcerer":["/items/peach","/items/bamboo_fabric","/items/flaming_cloth","/items/sorcerers_sole","/items/sorcerer_essence","/items/flame_blast","/items/fireball","/items/medium_treasure_chest"],"/monsters/fly":["/items/blue_key_fragment","/items/small_treasure_chest"],"/monsters/frog":["/items/egg","/items/green_tea_leaf","/items/black_tea_leaf","/items/swamp_essence","/items/smack","/items/small_treasure_chest"],"/monsters/giant_shoebill":["/items/swamp_essence","/items/shoebill_feather","/items/elusiveness","/items/sweep","/items/smack","/items/speed_aura","/items/green_key_fragment","/items/basic_stamina_charm","/items/advanced_stamina_charm","/items/medium_treasure_chest"],"/monsters/gobo_boomy":["/items/gobo_hide","/items/cotton_fabric","/items/linen_fabric","/items/green_tea_leaf","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/gobo_boomstick","/items/gobo_essence","/items/fireball","/items/revive","/items/small_treasure_chest"],"/monsters/gobo_chieftain":["/items/gobo_hide","/items/gobo_rag","/items/gobo_defender","/items/gobo_essence","/items/berserk","/items/puncture","/items/impale","/items/poke","/items/fierce_aura","/items/purple_key_fragment","/items/basic_attack_charm","/items/advanced_attack_charm","/items/large_treasure_chest"],"/monsters/gobo_shooty":["/items/gobo_hide","/items/orange","/items/plum","/items/peach","/items/green_tea_leaf","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/gobo_shooter","/items/gobo_essence","/items/flame_arrow","/items/small_treasure_chest"],"/monsters/gobo_slashy":["/items/gobo_hide","/items/blackberry","/items/strawberry","/items/mooberry","/items/black_tea_leaf","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/gobo_slasher","/items/gobo_essence","/items/cleave","/items/small_treasure_chest"],"/monsters/gobo_smashy":["/items/gobo_hide","/items/orange","/items/plum","/items/peach","/items/green_tea_leaf","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/gobo_smasher","/items/gobo_essence","/items/berserk","/items/small_treasure_chest"],"/monsters/gobo_stabby":["/items/gobo_hide","/items/burble_milk","/items/crimson_milk","/items/black_tea_leaf","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/gobo_stabber","/items/gobo_essence","/items/impale","/items/small_treasure_chest"],"/monsters/granite_golem":["/items/red_tea_leaf","/items/emp_tea_leaf","/items/garnet","/items/jade","/items/amethyst","/items/living_granite","/items/golem_essence","/items/provoke","/items/stunning_blow","/items/sweep","/items/invincible","/items/large_treasure_chest"],"/monsters/griffin":["/items/large_treasure_chest"],"/monsters/grizzly_bear":["/items/beast_hide","/items/mooberry","/items/marsberry","/items/spaceberry","/items/burble_tea_leaf","/items/red_tea_leaf","/items/emp_tea_leaf","/items/grizzly_bear_fluff","/items/bear_essence","/items/frenzy","/items/medium_treasure_chest"],"/monsters/gummy_bear":["/items/sugar","/items/apple_gummy","/items/orange_gummy","/items/plum_gummy","/items/peach_gummy","/items/dragon_fruit_gummy","/items/bear_essence","/items/frenzy","/items/medium_treasure_chest"],"/monsters/ice_sorcerer":["/items/peach","/items/bamboo_fabric","/items/icy_cloth","/items/sorcerers_sole","/items/sorcerer_essence","/items/ice_spear","/items/water_strike","/items/medium_treasure_chest"],"/monsters/infernal_warlock":["/items/red_tea_leaf","/items/emp_tea_leaf","/items/infernal_ember","/items/abyssal_essence","/items/firestorm","/items/flame_blast","/items/mystic_aura","/items/large_treasure_chest"],"/monsters/jackalope":["/items/large_treasure_chest"],"/monsters/juggler":["/items/large_treasure_chest"],"/monsters/jungle_sprite":["/items/cotton","/items/flax","/items/tome_of_healing","/items/jungle_essence","/items/heal","/items/entangle","/items/rejuvenate","/items/small_treasure_chest"],"/monsters/luna_empress":["/items/amber","/items/luna_wing","/items/jungle_essence","/items/rejuvenate","/items/elusiveness","/items/natures_veil","/items/toxic_pollen","/items/guardian_aura","/items/green_key_fragment","/items/basic_intelligence_charm","/items/advanced_intelligence_charm","/items/large_treasure_chest"],"/monsters/magician":["/items/large_treasure_chest"],"/monsters/magnetic_golem":["/items/red_tea_leaf","/items/emp_tea_leaf","/items/garnet","/items/jade","/items/amethyst","/items/magnet","/items/golem_essence","/items/stunning_blow","/items/large_treasure_chest"],"/monsters/manticore":["/items/large_treasure_chest"],"/monsters/marine_huntress":["/items/pearl","/items/marine_scale","/items/aqua_essence","/items/silencing_shot","/items/aqua_arrow","/items/rain_of_arrows","/items/mystic_aura","/items/blue_key_fragment","/items/basic_defense_charm","/items/advanced_defense_charm","/items/medium_treasure_chest"],"/monsters/myconid":["/items/cocoon","/items/black_tea_leaf","/items/burble_tea_leaf","/items/amber","/items/jungle_essence","/items/toxic_pollen","/items/small_treasure_chest"],"/monsters/nom_nom":["/items/blackberry","/items/strawberry","/items/orange","/items/plum","/items/green_tea_leaf","/items/black_tea_leaf","/items/burble_tea_leaf","/items/pearl","/items/aqua_essence","/items/impale","/items/small_treasure_chest"],"/monsters/novice_sorcerer":["/items/plum","/items/linen_fabric","/items/sorcerers_sole","/items/sorcerer_essence","/items/quick_aid","/items/water_strike","/items/medium_treasure_chest"],"/monsters/panda":["/items/beast_hide","/items/bamboo_branch","/items/wheat","/items/egg","/items/peach","/items/dragon_fruit","/items/star_fruit","/items/green_tea_leaf","/items/red_tea_leaf","/items/emp_tea_leaf","/items/panda_fluff","/items/bear_essence","/items/toughness","/items/medium_treasure_chest"],"/monsters/polar_bear":["/items/beast_hide","/items/crimson_milk","/items/rainbow_milk","/items/holy_milk","/items/moolong_tea_leaf","/items/red_tea_leaf","/items/emp_tea_leaf","/items/polar_bear_fluff","/items/bear_essence","/items/frenzy","/items/fierce_aura","/items/large_treasure_chest"],"/monsters/porcupine":["/items/rough_hide","/items/cotton","/items/green_tea_leaf","/items/quick_shot","/items/blue_key_fragment","/items/small_treasure_chest"],"/monsters/rabid_rabbit":["/items/large_treasure_chest"],"/monsters/rat":["/items/rough_hide","/items/wheat","/items/sugar","/items/cheese","/items/verdant_cheese","/items/azure_cheese","/items/poke","/items/blue_key_fragment","/items/small_treasure_chest"],"/monsters/red_panda":["/items/beast_hide","/items/red_panda_fluff","/items/bear_essence","/items/berserk","/items/frenzy","/items/maim","/items/cleave","/items/insanity","/items/brown_key_fragment","/items/basic_stamina_charm","/items/basic_melee_charm","/items/advanced_stamina_charm","/items/advanced_melee_charm","/items/large_treasure_chest"],"/monsters/sea_snail":["/items/wheat","/items/snail_shell","/items/green_tea_leaf","/items/black_tea_leaf","/items/burble_tea_leaf","/items/aqua_essence","/items/toughness","/items/small_treasure_chest"],"/monsters/skunk":["/items/rough_hide","/items/blueberry","/items/green_tea_leaf","/items/scratch","/items/blue_key_fragment","/items/small_treasure_chest"],"/monsters/slimy":["/items/apple","/items/green_tea_leaf","/items/minor_heal","/items/water_strike","/items/blue_key_fragment","/items/small_treasure_chest"],"/monsters/snake":["/items/reptile_hide","/items/egg","/items/snake_fang","/items/swamp_essence","/items/poke","/items/small_treasure_chest"],"/monsters/soul_hunter":["/items/umbral_leather","/items/red_tea_leaf","/items/emp_tea_leaf","/items/soul_fragment","/items/abyssal_essence","/items/silencing_shot","/items/flame_arrow","/items/critical_aura","/items/large_treasure_chest"],"/monsters/squawker":["/items/large_treasure_chest"],"/monsters/stalactite_golem":["/items/red_tea_leaf","/items/emp_tea_leaf","/items/garnet","/items/jade","/items/amethyst","/items/stalactite_shard","/items/golem_essence","/items/spike_shell","/items/toughness","/items/guardian_aura","/items/large_treasure_chest"],"/monsters/swampy":["/items/cocoon","/items/blueberry","/items/blackberry","/items/apple","/items/orange","/items/green_tea_leaf","/items/black_tea_leaf","/items/swamp_essence","/items/sweep","/items/small_treasure_chest"],"/monsters/the_kraken":["/items/large_treasure_chest"],"/monsters/the_watcher":["/items/eye_of_the_watcher","/items/eyessence","/items/precision","/items/steady_shot","/items/aqua_arrow","/items/flame_arrow","/items/speed_aura","/items/white_key_fragment","/items/basic_ranged_charm","/items/advanced_ranged_charm","/items/large_treasure_chest"],"/monsters/tidal_conjuror":["/items/large_treasure_chest"],"/monsters/treant":["/items/log","/items/birch_log","/items/cedar_log","/items/purpleheart_log","/items/ginkgo_log","/items/redwood_log","/items/arcane_log","/items/bamboo_branch","/items/amber","/items/treant_bark","/items/jungle_essence","/items/toxic_pollen","/items/entangle","/items/guardian_aura","/items/small_treasure_chest"],"/monsters/turtle":["/items/reptile_hide","/items/egg","/items/orange","/items/plum","/items/peach","/items/pearl","/items/turtle_shell","/items/aqua_essence","/items/toughness","/items/taunt","/items/small_treasure_chest"],"/monsters/vampire":["/items/umbral_hide","/items/red_tea_leaf","/items/emp_tea_leaf","/items/moonstone","/items/vampire_fang","/items/twilight_essence","/items/vampirism","/items/puncture","/items/fierce_aura","/items/large_treasure_chest"],"/monsters/veyes":["/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/red_tea_leaf","/items/magnifying_glass","/items/eyessence","/items/precision","/items/medium_treasure_chest"],"/monsters/werewolf":["/items/umbral_hide","/items/red_tea_leaf","/items/emp_tea_leaf","/items/moonstone","/items/werewolf_claw","/items/twilight_essence","/items/berserk","/items/maim","/items/insanity","/items/large_treasure_chest"],"/monsters/zombie":["/items/umbral_hide","/items/green_tea_leaf","/items/black_tea_leaf","/items/burble_tea_leaf","/items/moolong_tea_leaf","/items/red_tea_leaf","/items/emp_tea_leaf","/items/twilight_essence","/items/toughness","/items/maim","/items/natures_veil","/items/large_treasure_chest"],"/monsters/zombie_bear":["/items/large_treasure_chest"]};
+
   const NAME_OVERRIDES = {
     '/items/pathbreaker_boots': '开路者靴',
     '/items/pathfinder_boots': '探路者靴',
@@ -268,6 +391,7 @@
       version: 1,
       wishes: [],
       swaps: [],
+      actions: [],
       settings: { wishBasis: 'a', swapBasis: 'b', dailyProfitM: 0 },
       ui: { sheet: 'wish' }
     };
@@ -298,6 +422,18 @@
     lastError: '',
     modal: null,
     priceEdit: null,
+    actionData: null,
+    expandedActions: {},
+    actionDraft: {
+      tab: 'life',
+      lifeType: '',
+      lifeAction: '',
+      lifeActionQuery: '',
+      combatMode: 'solo',
+      combatAction: '',
+      combatQuery: '',
+      tier: 0
+    },
     tab: null,
     tablist: null,
     panelId: null,
@@ -455,6 +591,7 @@
           const all = keepAll ? !!x.all : false;
           const loc = keepAll ? (isSwapLoc(x.loc) ? x.loc : INV_LOC) : undefined;
           const cp = Number(x.customPrice);
+          const actionIds = Array.isArray(x.actionIds) ? x.actionIds.filter(Boolean) : (x.actionId ? [x.actionId] : []);
           let qty = Math.floor(Number(x.qty));
           if (!isFinite(qty)) qty = all ? 0 : 1;
           if (qty < 0) qty = 0;
@@ -466,7 +603,30 @@
             qty: qty,
             all: keepAll ? all : undefined,
             loc: loc,
-            customPrice: isFinite(cp) && cp > 0 ? cp : null
+            customPrice: isFinite(cp) && cp > 0 ? cp : null,
+            actionIds: actionIds,
+            manual: x.manual !== undefined ? !!x.manual : actionIds.length === 0
+          };
+        });
+      }
+      function normActions(arr) {
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(function (x) { return x && x.actionHrid; }).map(function (x) {
+          const kind = x.kind === 'combat' ? 'combat' : 'life';
+          return {
+            id: x.id || uid(),
+            kind: kind,
+            mode: x.mode || (kind === 'combat' ? 'solo' : 'life'),
+            typeKey: x.typeKey || '',
+            typeLabel: x.typeLabel || '',
+            groupLabel: x.groupLabel || '',
+            actionHrid: x.actionHrid,
+            name: x.name || x.actionHrid,
+            tier: Number(x.tier) || 0,
+            maxDifficulty: Number(x.maxDifficulty) || 0,
+            categoryHrid: x.categoryHrid || '',
+            icon: x.icon || '',
+            outputs: Array.isArray(x.outputs) ? x.outputs.filter(function (h) { return h && h.indexOf('/items/') === 0; }) : []
           };
         });
       }
@@ -474,6 +634,7 @@
         version: 1,
         wishes: norm(s.wishes),
         swaps: norm(s.swaps, { keepAll: true }),
+        actions: normActions(s.actions),
         settings: settings,
         ui: Object.assign({}, d.ui, s.ui || {})
       };
@@ -524,6 +685,256 @@
     return out;
   }
 
+  function mapFromData(data, names) {
+    function collect(raw, out, depth) {
+      if (!raw || depth < 0) return;
+      if (Array.isArray(raw) || typeof raw.values === 'function') {
+        const vals = Array.from(raw.values ? raw.values() : raw);
+        for (let i = 0; i < vals.length; i++) collect(vals[i], out, depth - 1);
+        return;
+      }
+      if (typeof raw !== 'object') return;
+      if (raw.hrid) { out[raw.hrid] = raw; return; }
+      const keys = Object.keys(raw);
+      for (let i = 0; i < keys.length; i++) collect(raw[keys[i]], out, depth - 1);
+    }
+    for (let i = 0; i < names.length; i++) {
+      const raw = data && data[names[i]];
+      if (!raw) continue;
+      const out = {};
+      collect(raw, out, 2);
+      if (Object.keys(out).length) return out;
+    }
+    return {};
+  }
+
+  function addOutputHrid(out, hrid) {
+    if (!hrid || hrid.indexOf('/items/') !== 0 || hrid === '/items/coin') return;
+    const it = rt.catalog && rt.catalog[hrid];
+    if (it && it.tradable === false) return;
+    if (out.indexOf(hrid) === -1) out.push(hrid);
+  }
+
+  function addDropItems(out, table) {
+    if (!Array.isArray(table)) return;
+    for (let i = 0; i < table.length; i++) {
+      if (table[i] && table[i].itemHrid) addOutputHrid(out, table[i].itemHrid);
+    }
+  }
+
+  function collectSpawnMonsters(raw, out, depth) {
+    if (!raw || depth < 0) return;
+    if (Array.isArray(raw) || typeof raw.values === 'function') {
+      const vals = Array.from(raw.values ? raw.values() : raw);
+      for (let i = 0; i < vals.length; i++) collectSpawnMonsters(vals[i], out, depth - 1);
+      return;
+    }
+    if (typeof raw !== 'object') return;
+    if (raw.combatMonsterHrid) {
+      if (out.indexOf(raw.combatMonsterHrid) === -1) out.push(raw.combatMonsterHrid);
+      return;
+    }
+    const keys = Object.keys(raw);
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i] === 'rewardDropTable') continue;
+      collectSpawnMonsters(raw[keys[i]], out, depth - 1);
+    }
+  }
+
+  function actionOutputs(action, monsters) {
+    const out = [];
+    addDropItems(out, action.dropTable);
+    addDropItems(out, action.essenceDropTable);
+    addDropItems(out, action.rareDropTable);
+    if (Array.isArray(action.outputItems)) {
+      for (let i = 0; i < action.outputItems.length; i++) {
+        if (action.outputItems[i]) addOutputHrid(out, action.outputItems[i].itemHrid);
+      }
+    }
+    if (action.combatZoneInfo) {
+      const spawns = [];
+      collectSpawnMonsters(action.combatZoneInfo.fightInfo, spawns, 4);
+      collectSpawnMonsters(action.combatZoneInfo.dungeonInfo, spawns, 4);
+      for (let i = 0; i < spawns.length; i++) {
+        const m = monsters[spawns[i]];
+        if (m) {
+          addDropItems(out, m.dropTable);
+          addDropItems(out, m.rareDropTable);
+        }
+        if (MONSTER_DROPS[spawns[i]]) {
+          const fallback = MONSTER_DROPS[spawns[i]];
+          for (let j = 0; j < fallback.length; j++) addOutputHrid(out, fallback[j]);
+        }
+      }
+      addDropItems(out, action.combatZoneInfo.dungeonInfo && action.combatZoneInfo.dungeonInfo.rewardDropTable);
+    }
+    return out;
+  }
+
+  function combatNameZh(name) {
+    return MONSTER_ZH[name] || ZONE_ZH[name] || DUNGEON_ZH[name] || ACTION_ZH[name] || name;
+  }
+
+  function actionNameByEnglish(name) {
+    if (!name) return '';
+    if (ACTION_ZH[name]) return ACTION_ZH[name];
+    if (COW_ZH[name]) return COW_ZH[name];
+    const forage = FORAGE_ZH[String(name).toLowerCase()];
+    if (forage) return forage;
+    const hrid = rt.itemByName && rt.itemByName[String(name).toLowerCase()];
+    if (hrid) {
+      const zh = zhName(hrid);
+      if (zh && zh.indexOf('/items/') !== 0) return zh;
+    }
+    return name;
+  }
+
+  function actionZhName(a) {
+    if (!a) return '';
+    if (a.nameZh) return a.nameZh;
+    return actionNameByEnglish(a.name || a.hrid || '');
+  }
+
+  function buildActionData(data) {
+    const actions = mapFromData(data, ['actionDetailMap', 'actionDetailMaps', 'actions', 'actionMap']);
+    const types = mapFromData(data, ['actionTypeDetailMap', 'actionTypeDetailMaps', 'actionTypeMap', 'actionTypes']);
+    const categories = mapFromData(data, ['actionCategoryDetailMap', 'actionCategoryDetailMaps', 'actionCategoryMap', 'actionCategories']);
+    const monsters = mapFromData(data, ['monsterDetailMap', 'monsterDetailMaps', 'monsterMap', 'monsterDetailDict', 'monsters']);
+    const actionKeys = Object.keys(actions);
+    const itemByName = {};
+    if (rt.catalog) {
+      for (const hrid in rt.catalog) {
+        const it = rt.catalog[hrid];
+        if (it && it.name) itemByName[String(it.name).toLowerCase()] = hrid;
+      }
+    }
+    rt.itemByName = itemByName;
+    const result = {
+      lifeTypes: [],
+      lifeActions: [],
+      combat: { solo: [], planet: [], dungeon: [] },
+      actions: actions,
+      monsters: monsters,
+      categories: categories,
+      types: types
+    };
+    if (!actionKeys.length) { rt.actionData = result; return; }
+
+    const lifeTypesByKey = {};
+    for (const typeHrid in LIFE_TYPE_META) {
+      if (!types[typeHrid] && !actionKeys.some(function (h) {
+        return (actions[h].type || actions[h].actionTypeHrid) === typeHrid;
+      })) continue;
+      const meta = LIFE_TYPE_META[typeHrid];
+      const t = {
+        key: typeHrid,
+        typeHrid: typeHrid,
+        label: meta.label,
+        order: meta.order,
+        actionHrid: ''
+      };
+      lifeTypesByKey[typeHrid] = t;
+      result.lifeTypes.push(t);
+    }
+
+    for (let i = 0; i < actionKeys.length; i++) {
+      const a = actions[actionKeys[i]];
+      const typeHrid = a.type || a.actionTypeHrid || '';
+      const categoryHrid = a.category || a.actionCategoryHrid || '';
+      if (typeHrid === '/action_types/combat') {
+        const info = a.combatZoneInfo || {};
+        const cat = categories[categoryHrid] || {};
+        const catEnglish = cat.name || categoryHrid;
+        const catName = ZONE_ZH[catEnglish] || cat.nameZh || catEnglish;
+        const isDungeon = !!info.isDungeon;
+        const isCategoryNamedAction = String(a.name || '').toLowerCase() === String(catEnglish || '').toLowerCase();
+        const mode = isDungeon ? 'dungeon' : (isCategoryNamedAction ? 'planet' : 'solo');
+        const rawMax = Number(a.maxDifficulty);
+        const areaOrder = Number(cat.sortIndex) || 999;
+        const actionOrder = Number(a.sortIndex) || 999;
+        const rec = {
+          actionHrid: a.hrid,
+          name: combatNameZh(a.nameZh || a.name || a.hrid),
+          categoryHrid: categoryHrid,
+          categoryName: catName,
+          mode: mode,
+          maxDifficulty: isFinite(rawMax) && rawMax >= 0 ? rawMax : (isDungeon ? 2 : 5),
+          maxPartySize: Number(a.maxPartySize) || 0,
+          areaOrder: areaOrder,
+          actionOrder: actionOrder,
+          outputs: actionOutputs(a, monsters)
+        };
+        result.combat[mode].push(rec);
+        continue;
+      }
+
+      let typeMeta = LIFE_TYPE_META[typeHrid];
+      let typeKey = typeHrid;
+      if (typeHrid === '/action_types/alchemy') {
+        const meta = ALCHEMY_LIFE_META[a.hrid];
+        if (!meta) continue;
+        typeKey = a.hrid;
+        typeMeta = { label: meta.label, order: meta.order };
+        if (!lifeTypesByKey[typeKey]) {
+          const t = {
+            key: typeKey,
+            typeHrid: typeHrid,
+            label: meta.label,
+            order: meta.order,
+            actionHrid: a.hrid
+          };
+          lifeTypesByKey[typeKey] = t;
+          result.lifeTypes.push(t);
+        }
+      } else if (!typeMeta) {
+        continue;
+      }
+      const cat = categories[categoryHrid] || {};
+      const outputs = actionOutputs(a, monsters);
+      result.lifeActions.push({
+        actionHrid: a.hrid,
+        typeKey: typeKey,
+        typeHrid: typeHrid,
+        typeLabel: typeMeta.label,
+        typeOrder: typeMeta.order,
+        name: actionZhName(a),
+        actionName: a.nameZh || a.name || a.hrid,
+        nameZh: a.nameZh || '',
+        categoryHrid: categoryHrid,
+        categoryName: ZONE_ZH[cat.name] || cat.name || '',
+        outputs: outputs
+      });
+    }
+
+    // 星球区域只保留每个星球的总动作，避免同星球小怪重复出现。
+    const planetByCategory = {};
+    for (let i = 0; i < result.combat.planet.length; i++) {
+      const act = result.combat.planet[i];
+      const cur = planetByCategory[act.categoryHrid];
+      if (!cur ||
+          act.name === act.categoryName ||
+          act.maxPartySize > cur.maxPartySize) {
+        planetByCategory[act.categoryHrid] = act;
+      }
+    }
+    result.combat.planet = Object.keys(planetByCategory).map(function (k) { return planetByCategory[k]; });
+
+    result.lifeTypes.sort(function (a, b) { return a.order - b.order; });
+    result.lifeActions.sort(function (a, b) {
+      return (a.typeOrder - b.typeOrder) || a.name.localeCompare(b.name, 'zh');
+    });
+    result.combat.solo.sort(function (a, b) {
+      return (a.areaOrder - b.areaOrder) || (a.actionOrder - b.actionOrder) || a.name.localeCompare(b.name, 'zh');
+    });
+    result.combat.planet.sort(function (a, b) {
+      return (a.areaOrder - b.areaOrder) || (a.actionOrder - b.actionOrder) || a.name.localeCompare(b.name, 'zh');
+    });
+    result.combat.dungeon.sort(function (a, b) {
+      return (a.areaOrder - b.areaOrder) || (a.actionOrder - b.actionOrder) || a.name.localeCompare(b.name, 'zh');
+    });
+    rt.actionData = result;
+  }
+
   function readClientData() {
     const ls = getPageLS();
     if (!ls) return null;
@@ -537,7 +948,7 @@
     if (!obj) {
       try { obj = JSON.parse(raw); } catch (e) { /* ignore */ }
     }
-    if (obj && obj.itemDetailMap) return obj.itemDetailMap;
+    if (obj && obj.itemDetailMap) return obj;
     console.warn('[攒钱] initClientData 无法解析');
     return null;
   }
@@ -545,10 +956,13 @@
   function initCatalog() {
     const cached = readCatalogCache();
     if (cached) { rt.catalog = cached; rt.catalogSource = 'cache'; }
-    const map = readClientData();
+    const data = readClientData();
+    const map = data && data.itemDetailMap;
     if (map) {
       rt.catalog = buildCatalog(map);
       rt.catalogSource = 'localStorage';
+      try { buildActionData(data); } catch (e) { rt.actionData = null; console.warn('[攒钱] 动作数据解析失败', e); }
+      try { pruneActionOutputs(); } catch (e) { /* ignore */ }
     } else if (!rt.catalog) {
       rt.catalogSource = 'none';
     }
@@ -612,6 +1026,46 @@
     }
     rt.namesLoading = false;
     scheduleRender();
+  }
+
+  function isTradableHrid(hrid) {
+    const it = rt.catalog && rt.catalog[hrid];
+    return !it || it.tradable !== false;
+  }
+
+  function pruneActionOutputs() {
+    if (!rt.catalog) return;
+    let changed = false;
+    const keep = [];
+    for (let i = 0; i < state.actions.length; i++) {
+      const a = state.actions[i];
+      const raw = a.outputs && a.outputs.length
+        ? a.outputs
+        : state.swaps.filter(function (s) { return (s.actionIds || []).indexOf(a.id) !== -1; })
+            .map(function (s) { return s.hrid; });
+      const outs = raw.filter(isTradableHrid);
+      if (outs.length !== (a.outputs || []).length) { a.outputs = outs; changed = true; }
+      if (!outs.length) { changed = true; continue; }
+      keep.push(a);
+    }
+    const ids = {};
+    for (let i = 0; i < keep.length; i++) ids[keep[i].id] = true;
+    const swaps = [];
+    for (let i = 0; i < state.swaps.length; i++) {
+      const s = state.swaps[i];
+      if (!s.actionIds || !s.actionIds.length) { swaps.push(s); continue; }
+      s.actionIds = s.actionIds.filter(function (id) { return ids[id]; });
+      if (!isTradableHrid(s.hrid)) {
+        changed = true;
+        if (s.manual) { s.actionIds = []; swaps.push(s); }
+        continue;
+      }
+      if (!s.actionIds.length && !s.manual) { changed = true; continue; }
+      swaps.push(s);
+    }
+    state.actions = keep;
+    state.swaps = swaps;
+    if (changed) saveState();
   }
 
   function isLabyrinth(hrid, category) {
@@ -716,6 +1170,25 @@
     const out = [];
     const seen = {};
 
+    const QTY_FIELDS = ['orderQuantity', 'remainingOrderQuantity', 'quantity', 'count', 'amount',
+      'remainingQuantity', 'remaining', 'qty', 'stackSize', 'stackCount', 'totalQuantity',
+      'itemCount', 'itemQuantity', 'numItems', 'units', 'unitCount', 'listingQuantity', 'size'];
+
+    function maxQty(obj) {
+      let max = null;
+      function take(src) {
+        if (!src || typeof src !== 'object') return;
+        for (let i = 0; i < QTY_FIELDS.length; i++) {
+          const n = Number(src[QTY_FIELDS[i]]);
+          if (isFinite(n) && n >= 0 && (max == null || n > max)) max = n;
+        }
+      }
+      take(obj);
+      take(obj.item);
+      take(obj.listing);
+      return max;
+    }
+
     function firstNumber() {
       for (let i = 0; i < arguments.length; i++) {
         const n = Number(arguments[i]);
@@ -733,14 +1206,13 @@
       }
       const hrid = obj.itemHrid || (obj.item && (obj.item.itemHrid || obj.item.hrid)) || obj.hrid;
       if (hrid && hrid.indexOf('/items/') === 0) {
-        if (obj.isBuy === true) return;
-        let qty = firstNumber(obj.quantity, obj.count, obj.amount, obj.remainingQuantity, obj.remaining, obj.qty);
+        let qty = maxQty(obj);
         const filled = firstNumber(obj.filledQuantity, obj.quantityFilled, obj.filled);
         if (qty == null) qty = 1;
         if (filled != null && filled > 0 && qty > filled) qty -= filled;
         if (!(qty > 0)) return;
         const enh = Number(obj.enhancementLevel || obj.enhancement || 0) || 0;
-        const id = obj.id || obj.hash || (hrid + '|' + enh + '|' + qty + '|' + (obj.price || ''));
+        const id = obj.id || obj.hash || (hrid + '|' + enh + '|' + qty + '|' + (obj.price || '') + '|' + out.length);
         if (seen[id]) return;
         seen[id] = true;
         out.push({
@@ -1050,7 +1522,7 @@
     }, 3000);
   }
 
-  function refreshInventory() {
+  function refreshInventory(silent) {
     if (rt.inventoryLoading) return;
     rt.inventoryLoading = true;
     scheduleRender();
@@ -1073,15 +1545,15 @@
             rt.gold = oldGold;
           }
           const goldNote = picked ? (goldChanged ? '，金币已更新' : '') : (!hasCoin ? '，金币未读取到，保留原值' : '');
-          showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
+          if (!silent) showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
         } else if (picked) {
           rt.gold = picked.value;
-          showNotice('金币已刷新（实时），但未读取到库存');
+          if (!silent) showNotice('金币已刷新（实时），但未读取到库存');
         } else {
-          showNotice('未读取到库存，请刷新页面后重试');
+          if (!silent) showNotice('未读取到库存，请刷新页面后重试');
         }
       } catch (e) {
-        showNotice('刷新库存失败：' + (e && e.message ? e.message : e));
+        if (!silent) showNotice('刷新库存失败：' + (e && e.message ? e.message : e));
       } finally {
         rt.inventoryLoading = false;
         scheduleRender();
@@ -1125,12 +1597,19 @@
       if (!s.all) continue;
       const key = keyOf(s);
       if (seen[key]) {
+        const kept = seen[key];
+        const ids = kept.actionIds || [];
+        const more = s.actionIds || [];
+        for (let j = 0; j < more.length; j++) if (ids.indexOf(more[j]) === -1) ids.push(more[j]);
+        kept.actionIds = ids;
+        kept.manual = !!kept.manual || !!s.manual;
+        if (kept.customPrice == null && s.customPrice != null) kept.customPrice = s.customPrice;
         state.swaps.splice(i, 1);
         changed = true;
         continue;
       }
-      seen[key] = true;
-      const qty = locQty(s.hrid, s.enh, s.loc || INV_LOC);
+      seen[key] = s;
+      const qty = allQty(s.hrid, s.enh, s.loc || INV_LOC);
       if (s.qty !== qty) {
         s.qty = qty;
         changed = true;
@@ -1183,6 +1662,18 @@
       if (it.hrid === hrid && it.enh === enh && it.loc === loc) n += it.qty;
     }
     return n;
+  }
+
+  function marketQty(hrid, enh) {
+    return locQty(hrid, enh, MARKET_LOC);
+  }
+
+  function allQty(hrid, enh, loc) {
+    loc = loc || INV_LOC;
+    if (loc === INV_LOC || loc.indexOf('/item_locations/market') === 0) {
+      return locQty(hrid, enh, INV_LOC) + marketQty(hrid, enh);
+    }
+    return locQty(hrid, enh, loc);
   }
 
   function invQty(hrid, enh) {
@@ -1306,19 +1797,53 @@
 
   /* ---------------------------- 评估 ---------------------------- */
 
+  function dedupeEvalSwaps(list) {
+    const allHoldKeys = {};
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      const loc = s.loc || INV_LOC;
+      if (s.all && (loc === INV_LOC || loc.indexOf('/item_locations/market') === 0)) {
+        allHoldKeys[s.hrid + '|' + s.enh] = true;
+      }
+    }
+    const byKey = {};
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      const loc = s.loc || INV_LOC;
+      if (!s.all && allHoldKeys[s.hrid + '|' + s.enh] &&
+          (loc === INV_LOC || loc.indexOf('/item_locations/market') === 0)) continue;
+      const key = s.all
+        ? (s.hrid + '|' + s.enh + '|' + ((loc === INV_LOC || loc.indexOf('/item_locations/market') === 0) ? 'ALL' : loc))
+        : (s.hrid + '|' + s.enh + '|' + loc);
+      const cur = byKey[key];
+      if (!cur) {
+        byKey[key] = s;
+        out.push(s);
+      } else if ((Number(s.qty) || 0) > (Number(cur.qty) || 0)) {
+        const idx = out.indexOf(cur);
+        if (idx !== -1) out[idx] = s;
+        byKey[key] = s;
+      }
+    }
+    return out;
+  }
+
   function evaluate() {
     const gold = rt.gold || 0;
+    const evalSwaps = dedupeEvalSwaps(state.swaps);
     const swapQty = new Map();
-    for (let i = 0; i < state.swaps.length; i++) {
-      const s = state.swaps[i];
-      if ((s.loc || INV_LOC) !== INV_LOC) continue;
+    for (let i = 0; i < evalSwaps.length; i++) {
+      const s = evalSwaps[i];
+      const loc = s.loc || INV_LOC;
+      if (loc !== INV_LOC && loc.indexOf('/item_locations/market') !== 0) continue;
       const k = s.hrid + '|' + s.enh;
       swapQty.set(k, (swapQty.get(k) || 0) + s.qty);
     }
 
     let swapsValue = 0;
-    for (let i = 0; i < state.swaps.length; i++) {
-      const s = state.swaps[i];
+    for (let i = 0; i < evalSwaps.length; i++) {
+      const s = evalSwaps[i];
       const custom = customPriceOf(s);
       const p = custom != null ? { value: custom, exact: true } : pickPrice(rt.market, s.hrid, s.enh, state.settings.swapBasis);
       swapsValue += (p.value || 0) * s.qty * (1 - SWAP_TAX);
@@ -1333,7 +1858,7 @@
 
     const rows = state.wishes.map(function (w) {
       const key = w.hrid + '|' + w.enh;
-      const ownedRaw = invQty(w.hrid, w.enh);
+      const ownedRaw = locQty(w.hrid, w.enh, INV_LOC) + marketQty(w.hrid, w.enh);
       const owned = Math.max(0, ownedRaw - (swapQty.get(key) || 0));
       const need = Math.max(0, w.qty - owned);
       const q = rt.market && rt.market[w.hrid] && rt.market[w.hrid][String(w.enh)];
@@ -1401,10 +1926,8 @@
         '<div class="mwi-wrap">' +
           '<div class="mwi-top">' +
             '<div class="mwi-left-actions">' +
-              '<button class="mwi-btn" data-act="refresh"' + (rt.loadingMarket ? ' disabled' : '') + '>' +
-                (rt.loadingMarket ? '刷新中…' : '刷新价格') + '</button>' +
-              '<button class="mwi-btn" data-act="refresh-inventory"' + (rt.inventoryLoading ? ' disabled' : '') + '>' +
-                (rt.inventoryLoading ? '刷新中…' : '刷新库存') + '</button>' +
+              '<button class="mwi-btn" data-act="refresh-all"' + ((rt.loadingMarket || rt.inventoryLoading) ? ' disabled' : '') + '>' +
+                ((rt.loadingMarket || rt.inventoryLoading) ? '刷新中…' : '刷新') + '</button>' +
             '</div>' +
             '<div class="mwi-title">攒钱计划</div>' +
             '<div class="mwi-actions">' +
@@ -1507,11 +2030,12 @@
         const buy = r.bid == null ? '—' : fmt(r.bid);
         const subtotal = r.unit == null ? '—' : fmt(r.unit * r.qty);
         return '<div class="mwi-tr mwi-wish-tr">' +
-          '<span class="mwi-prio">' + (i + 1) +
+          '<span class="mwi-prio">' +
             '<span class="mwi-arrows">' +
               '<button class="mwi-btn" data-act="up-wish" data-id="' + esc(r.id) + '">↑</button>' +
               '<button class="mwi-btn" data-act="down-wish" data-id="' + esc(r.id) + '">↓</button>' +
             '</span>' +
+            (i + 1) +
           '</span>' +
           '<span class="mwi-item" title="' + esc(displayName(r.hrid, r.enh)) + '">' + icon(r.hrid) + '</span>' +
           '<span class="num">' + r.qty + '</span>' +
@@ -1526,7 +2050,328 @@
   }
 
   function swapSheet() {
-    return dataWarnings() + swapAddForm() + swapList();
+    return dataWarnings() + actionAddSection() + itemAddSection() + swapAddForm() + actionList() + swapList();
+  }
+
+  function actionDataReady() {
+    return !!(rt.actionData && (rt.actionData.lifeActions.length || rt.actionData.combat.solo.length ||
+      rt.actionData.combat.planet.length || rt.actionData.combat.dungeon.length));
+  }
+
+  function lifeActionByHrid(hrid) {
+    if (!rt.actionData) return null;
+    return rt.actionData.lifeActions.find(function (a) { return a.actionHrid === hrid; }) || null;
+  }
+
+  function combatActionByHrid(mode, hrid) {
+    if (!rt.actionData || !rt.actionData.combat[mode]) return null;
+    return rt.actionData.combat[mode].find(function (a) { return a.actionHrid === hrid; }) || null;
+  }
+
+  function lifeActionDisplay(act) {
+    if (!act) return '';
+    const zh = actionZhName({ name: act.actionName || act.name, nameZh: act.nameZh || '' });
+    if (zh) return zh;
+    return act.name || act.actionName || act.actionHrid;
+  }
+
+  function lifeTypeByKey(key) {
+    if (!rt.actionData) return null;
+    return rt.actionData.lifeTypes.find(function (t) { return t.key === key; }) || null;
+  }
+
+  function lifeActionHay(act) {
+    const names = [lifeActionDisplay(act), act.actionName, act.name, act.typeLabel, act.categoryName].filter(Boolean);
+    for (let i = 0; i < (act.outputs || []).length; i++) names.push(zhName(act.outputs[i]));
+    return names.join(' ').toLowerCase();
+  }
+
+  function actionAddSection() {
+    const d = rt.actionDraft;
+    let body = '';
+    if (!actionDataReady()) {
+      body = '<div class="mwi-dim">动作数据未加载（需要 initClientData 中的动作/怪物数据）。</div>';
+    } else if (d.tab === 'combat') {
+      body = combatActionForm();
+    } else {
+      body = lifeActionForm();
+    }
+    return '<div class="mwi-section">动作添加</div>' +
+      '<div class="mwi-action-add">' +
+        '<div class="mwi-action-tabs">' +
+          '<button class="mwi-btn' + (d.tab === 'life' ? ' primary' : '') + '" data-act="action-tab" data-tab="life">生活</button>' +
+          '<button class="mwi-btn' + (d.tab === 'combat' ? ' primary' : '') + '" data-act="action-tab" data-tab="combat">战斗</button>' +
+        '</div>' + body +
+      '</div>';
+  }
+
+  function lifeActionForm() {
+    const d = rt.actionDraft;
+    const ad = rt.actionData;
+    let options = '<option value="">选择生活动作</option>';
+    for (let i = 0; i < ad.lifeTypes.length; i++) {
+      const t = ad.lifeTypes[i];
+      options += '<option value="' + esc(t.key) + '"' + (d.lifeType === t.key ? ' selected' : '') + '>' +
+        esc(t.label) + '</option>';
+    }
+    const type = lifeTypeByKey(d.lifeType);
+    const acts = type ? ad.lifeActions.filter(function (a) { return a.typeKey === d.lifeType; }) : [];
+    const selected = d.lifeAction ? lifeActionByHrid(d.lifeAction) : null;
+    let selectedHtml = '';
+    if (selected) {
+      const outNames = selected.outputs.map(function (h) { return displayName(h, 0); });
+      selectedHtml = '<div class="mwi-action-selected">' +
+        '<b>' + esc(selected.typeLabel + ' · ' + lifeActionDisplay(selected)) + '</b>' +
+        '<span class="mwi-dim">产出 ' + outNames.length + ' 项</span></div>' +
+        (outNames.length ? '' : '<div class="mwi-dim">点金/转换/分解的产出取决于投入物品，暂不自动带入产出。</div>');
+    }
+    let actionCombo = '';
+    if (type) {
+      actionCombo = '<div class="mwi-combo mwi-action-combo">' +
+        '<input class="mwi-input" data-role="life-action-search" autocomplete="off" ' +
+          'placeholder="搜索二级动作（如 翠绿奶牛、杨桃、木板）" value="' + esc(d.lifeActionQuery) + '">' +
+        '<div class="mwi-results" data-role="life-action-results" hidden></div>' +
+      '</div>';
+    }
+    return '<div class="mwi-action-form">' +
+      '<label class="mwi-field">生活动作 <select class="mwi-select" data-role="life-type">' + options + '</select></label>' +
+      actionCombo +
+      (type ? '<div class="mwi-dim">可选动作 ' + acts.length + ' 个</div>' : '') +
+      selectedHtml +
+      '<div class="mwi-action-buttons">' +
+        '<button class="mwi-btn primary" data-act="add-action"' + (selected ? '' : ' disabled') + '>添加</button>' +
+        '<button class="mwi-btn" data-act="cancel-action">取消</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function combatActionForm() {
+    const d = rt.actionDraft;
+    const ad = rt.actionData;
+    const modes = [
+      { key: 'solo', label: '单独区域' },
+      { key: 'planet', label: '星球区域' },
+      { key: 'dungeon', label: '地下城' }
+    ];
+    let modeBtns = '';
+    for (let i = 0; i < modes.length; i++) {
+      modeBtns += '<button class="mwi-btn' + (d.combatMode === modes[i].key ? ' primary' : '') +
+        '" data-act="combat-mode" data-mode="' + modes[i].key + '">' + modes[i].label + '</button>';
+    }
+    const selected = d.combatAction ? combatActionByHrid(d.combatMode, d.combatAction) : null;
+    let tierHtml = '';
+    if (selected) {
+      const max = Math.max(0, Number(selected.maxDifficulty) || 0);
+      let opts = '';
+      for (let t = 0; t <= max; t++) {
+        opts += '<option value="' + t + '"' + (Number(d.tier) === t ? ' selected' : '') + '>T' + t + '</option>';
+      }
+      tierHtml = '<label class="mwi-field">难度 <select class="mwi-select" data-role="combat-tier">' + opts + '</select></label>';
+    }
+    let selectedHtml = '';
+    if (selected) {
+      selectedHtml = '<div class="mwi-action-selected">' +
+        '<b>' + esc(selected.name + ' T' + (Number(d.tier) || 0)) + '</b>' +
+        '<span class="mwi-dim">产出 ' + selected.outputs.length + ' 项</span></div>';
+    }
+    return '<div class="mwi-action-form">' +
+      '<div class="mwi-action-tabs">' + modeBtns + '</div>' +
+      '<div class="mwi-combo mwi-action-combo">' +
+        '<input class="mwi-input" data-role="combat-action-search" autocomplete="off" ' +
+          'placeholder="搜索' + (d.combatMode === 'solo' ? '怪物' : (d.combatMode === 'planet' ? '星球' : '地下城')) + '名称" ' +
+          'value="' + esc(d.combatQuery) + '">' +
+        '<div class="mwi-results" data-role="combat-action-results" hidden></div>' +
+      '</div>' +
+      tierHtml + selectedHtml +
+      '<div class="mwi-action-buttons">' +
+        '<button class="mwi-btn primary" data-act="add-action"' + (selected ? '' : ' disabled') + '>添加</button>' +
+        '<button class="mwi-btn" data-act="cancel-action">取消</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function lifeActionResultsHtml() {
+    const d = rt.actionDraft;
+    if (!rt.actionData || !d.lifeType) return '';
+    const q = String(d.lifeActionQuery || '').trim().toLowerCase();
+    const list = rt.actionData.lifeActions.filter(function (a) {
+      if (a.typeKey !== d.lifeType) return false;
+      return !q || lifeActionHay(a).indexOf(q) !== -1;
+    }).slice(0, 40);
+    if (!list.length) return '<div class="mwi-dim" style="padding:8px">没有匹配的生活动作</div>';
+    return list.map(function (a) {
+      const outNames = a.outputs.map(function (h) { return displayName(h, 0); });
+      return '<div class="mwi-result" data-act="select-life-action" data-hrid="' + esc(a.actionHrid) + '">' +
+        '<span>' + esc(lifeActionDisplay(a)) + '</span>' +
+        '<span class="mwi-dim">' + esc(a.typeLabel) + '</span>' +
+        (outNames.length ? '<span class="mwi-dim">' + esc(outNames.slice(0, 2).join('、')) + '</span>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  function combatActionResultsHtml() {
+    const d = rt.actionDraft;
+    if (!rt.actionData) return '';
+    const q = String(d.combatQuery || '').trim().toLowerCase();
+    const list = (rt.actionData.combat[d.combatMode] || []).filter(function (a) {
+      if (!q) return true;
+      const names = [a.name, a.categoryName];
+      for (let i = 0; i < (a.outputs || []).length; i++) names.push(zhName(a.outputs[i]));
+      return names.join(' ').toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 40);
+    if (!list.length) return '<div class="mwi-dim" style="padding:8px">没有匹配的战斗动作</div>';
+    return list.map(function (a) {
+      return '<div class="mwi-result" data-act="select-combat-action" data-hrid="' + esc(a.actionHrid) + '">' +
+        '<span>' + esc(a.name) + '</span>' +
+        '<span class="mwi-dim">T0–T' + Math.max(0, a.maxDifficulty) + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  function resetActionDraft() {
+    rt.actionDraft = {
+      tab: rt.actionDraft.tab,
+      lifeType: '',
+      lifeAction: '',
+      lifeActionQuery: '',
+      combatMode: rt.actionDraft.combatMode,
+      combatAction: '',
+      combatQuery: '',
+      tier: 0
+    };
+  }
+
+  function addActionFromDraft() {
+    const d = rt.actionDraft;
+    const ad = rt.actionData;
+    if (!ad) return;
+    let act = null;
+    let group = null;
+    if (d.tab === 'life') {
+      act = lifeActionByHrid(d.lifeAction);
+      if (!act) return;
+      group = {
+        kind: 'life',
+        mode: 'life',
+        typeKey: act.typeKey,
+        typeLabel: act.typeLabel,
+        groupLabel: act.groupLabel,
+        actionHrid: act.actionHrid,
+        name: lifeActionDisplay(act),
+        tier: 0,
+        maxDifficulty: 0,
+        categoryHrid: act.categoryHrid
+      };
+    } else {
+      act = combatActionByHrid(d.combatMode, d.combatAction);
+      if (!act) return;
+      const tier = Math.max(0, Number(d.tier) || 0);
+      group = {
+        kind: 'combat',
+        mode: d.combatMode,
+        typeKey: '',
+        typeLabel: '',
+        groupLabel: '',
+        actionHrid: act.actionHrid,
+        name: act.name,
+        tier: tier,
+        maxDifficulty: act.maxDifficulty,
+        categoryHrid: act.categoryHrid
+      };
+    }
+    if (!act.outputs || !act.outputs.length) {
+      showNotice('该动作没有可自动带入的固定产出');
+      return;
+    }
+    const exists = state.actions.some(function (x) {
+      return x.kind === group.kind && x.actionHrid === group.actionHrid && (x.tier || 0) === (group.tier || 0);
+    });
+    if (exists) {
+      showNotice('该动作已在置换动作清单中');
+      return;
+    }
+    const id = uid();
+    group.id = id;
+    group.outputs = act.outputs.slice();
+    state.actions.push(group);
+    for (let i = 0; i < act.outputs.length; i++) {
+      const hrid = act.outputs[i];
+      const key = hrid + '|0|' + INV_LOC;
+      const existing = state.swaps.find(function (s) {
+        return s.hrid + '|' + s.enh + '|' + (s.loc || INV_LOC) === key;
+      });
+      if (existing) {
+        existing.actionIds = existing.actionIds || [];
+        if (existing.actionIds.indexOf(id) === -1) existing.actionIds.push(id);
+        existing.all = true;
+        existing.loc = INV_LOC;
+        if (existing.manual === undefined) existing.manual = true;
+      } else {
+        state.swaps.push({
+          id: uid(),
+          hrid: hrid,
+          enh: 0,
+          qty: 0,
+          all: true,
+          loc: INV_LOC,
+          customPrice: null,
+          actionIds: [id],
+          manual: false
+        });
+      }
+    }
+    rt.expandedActions[id] = false;
+    resetActionDraft();
+    syncAllSwaps();
+    saveState();
+    render();
+  }
+
+  function actionSwaps(a) {
+    if (a.outputs && a.outputs.length) {
+      const keys = {};
+      for (let i = 0; i < a.outputs.length; i++) keys[a.outputs[i]] = true;
+      return state.swaps.filter(function (s) {
+        return s.all && s.enh === 0 && (s.loc || INV_LOC) === INV_LOC && keys[s.hrid];
+      });
+    }
+    return state.swaps.filter(function (s) {
+      return (s.actionIds || []).indexOf(a.id) !== -1 || s.actionId === a.id;
+    });
+  }
+
+  function itemAddSection() {
+    return '<div class="mwi-section">物品添加</div>';
+  }
+
+  function actionList() {
+    if (!state.actions.length) {
+      return '<div class="mwi-section">置换动作清单</div>' +
+        '<div class="mwi-dim">还没有置换动作。</div>';
+    }
+    return '<div class="mwi-section">置换动作清单</div>' +
+      state.actions.map(function (a) {
+        const outs = actionSwaps(a);
+        const expanded = !!rt.expandedActions[a.id];
+        const liveAct = a.kind === 'life' ? lifeActionByHrid(a.actionHrid) : null;
+        const shownName = a.kind === 'life' && liveAct ? lifeActionDisplay(liveAct) : a.name;
+        const title = a.kind === 'life'
+          ? (a.typeLabel + ' · ' + shownName)
+          : ('战斗 · ' + a.name + ' T' + (a.tier || 0));
+        return '<div class="mwi-action-card">' +
+          '<div class="mwi-action-row">' +
+            '<div class="mwi-action-main">' +
+              '<div class="mwi-action-name">' + esc(title) + '</div>' +
+              '<div class="mwi-dim">产出 ' + outs.length + ' 项</div>' +
+            '</div>' +
+            '<button class="mwi-btn" data-act="toggle-action" data-id="' + esc(a.id) + '">' + (expanded ? '收起' : '展开') + '</button>' +
+            '<button class="mwi-btn danger" data-act="del-action" data-id="' + esc(a.id) + '">删除</button>' +
+          '</div>' +
+          (expanded ? '<div class="mwi-action-items">' +
+            (outs.length ? swapTableHtml(outs, a.id) : '<div class="mwi-dim">该动作下暂无产出物品。</div>') +
+          '</div>' : '') +
+        '</div>';
+      }).join('');
   }
 
   function swapAddForm() {
@@ -1534,18 +2379,22 @@
     let pending = '';
     if (d.hrid) {
       const loc = d.loc || INV_LOC;
-      const stock = locQty(d.hrid, d.enh, loc);
-      const avail = Math.max(0, stock - swapAssigned(d.hrid, d.enh, loc));
-      const shown = d.all ? stock : avail;
+      const baseStock = locQty(d.hrid, d.enh, loc);
+      const allStock = allQty(d.hrid, d.enh, loc);
+      const ownedQty = locQty(d.hrid, d.enh, INV_LOC) + marketQty(d.hrid, d.enh);
+      const stock = d.all ? allStock : baseStock;
+      const avail = Math.max(0, baseStock - swapAssigned(d.hrid, d.enh, loc));
+      const shown = d.all ? allStock : avail;
       pending =
         '<div class="mwi-pending">' + icon(d.hrid) +
         '<b>' + esc(displayName(d.hrid, d.enh)) + '</b>' +
+        '<span class="mwi-dim">拥有 ' + fmtQty(ownedQty) + '</span>' +
         '<span class="mwi-dim" title="' + locLabel(loc) + ' ' + stock + '">' +
           locLabel(loc) + ' ' + fmtQty(shown) + '</span>' +
         '<label>数量 <input class="mwi-input" style="width:64px" type="number" min="1" max="' + Math.max(1, shown) +
-          '" value="' + esc(d.all ? stock : d.qty) + '" data-role="swap-qty"' + (d.all ? ' disabled' : '') + '></label>' +
+          '" value="' + esc(d.all ? allStock : d.qty) + '" data-role="swap-qty"' + (d.all ? ' disabled' : '') + '></label>' +
         '<label class="mwi-check"><input type="checkbox" data-role="swap-all"' + (d.all ? ' checked' : '') +
-          (stock <= 0 ? ' disabled' : '') + '> 全部</label>' +
+          (allStock <= 0 ? ' disabled' : '') + '> 全部</label>' +
         '<button class="mwi-btn primary" data-act="add-swap"' + (shown <= 0 ? ' disabled' : '') + '>添加</button>' +
         '<button class="mwi-btn" data-act="cancel-swap">取消</button>' +
         '</div>';
@@ -1586,11 +2435,17 @@
       shown.push(e);
     }
     if (!shown.length) return '<div class="mwi-dim" style="padding:8px">库存、装备、市场挂单中没有匹配物品</div>';
+    const actionKeys = actionItemKeys();
     return shown.map(function (e) {
       const it = rt.catalog && rt.catalog[e.hrid];
       const lab = isLabyrinth(e.hrid, it && it.category);
       const tags = (lab ? '<span class="mwi-tag">迷宫</span>' : '') +
         (it && !it.tradable ? '<span class="mwi-tag warn">不可交易</span>' : '');
+      if (actionKeys[e.hrid + '|' + e.enh]) {
+        return '<div class="mwi-result disabled" title="已在置换动作清单中，请到动作清单查看">' +
+          icon(e.hrid) + '<span>' + esc(displayName(e.hrid, e.enh)) + '</span>' + tags +
+          '<span class="mwi-dim">已在动作产出中</span></div>';
+      }
       return '<div class="mwi-result" data-act="select-swap" data-hrid="' + esc(e.hrid) +
         '" data-enh="' + e.enh + '" data-loc="' + esc(e.loc) + '" data-name="' + esc(displayName(e.hrid, e.enh)) + '">' +
         icon(e.hrid) + '<span>' + esc(displayName(e.hrid, e.enh)) + '</span>' + tags +
@@ -1599,18 +2454,14 @@
     }).join('');
   }
 
-  function swapList() {
-    if (!state.swaps.length) {
-      return '<div class="mwi-dim">还没有置换物品。从库存、装备或市场挂单中选择要卖掉的物品。</div>';
-    }
+  function swapTableHtml(list, actionId) {
     const swapTaxFactor = 1 - SWAP_TAX;
-    return '<div class="mwi-section">置换列表</div>' +
-      '<div class="mwi-table">' +
+    return '<div class="mwi-table">' +
       '<div class="mwi-tr mwi-swap-tr mwi-th">' +
         '<span>物品</span><span class="num">数量</span><span class="num">卖价</span>' +
         '<span class="num">买价</span><span class="num">自定义</span><span class="num">税后小计</span><span></span>' +
       '</div>' +
-      state.swaps.map(function (s) {
+      list.map(function (s) {
         const q = rt.market && rt.market[s.hrid] && rt.market[s.hrid][String(s.enh)];
         const ask = q && q.a > 0 ? q.a : null;
         const bid = q && q.b > 0 ? q.b : null;
@@ -1619,20 +2470,51 @@
         const subtotal = p.value == null ? '—' : fmt(p.value * s.qty * swapTaxFactor);
         const loc = s.loc || INV_LOC;
         const stock = locQty(s.hrid, s.enh, loc);
+        const invStock = locQty(s.hrid, s.enh, INV_LOC);
+        const mktStock = marketQty(s.hrid, s.enh);
+        const qtyCell = s.all
+          ? '<span class="num mwi-all-cell" title="库存：' + invStock + ' 市场：' + mktStock + '"><span class="mwi-tag mwi-all-tag" title="库存：' + invStock + ' 市场：' + mktStock + '">全部</span></span>'
+          : '<span class="num" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + '）') + '">' + fmtQty(s.qty) + '</span>';
         return '<div class="mwi-tr mwi-swap-tr">' +
           '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（' + locLabel(loc) + ' ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
-          '<span class="num" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + (s.all ? '，全部' : '') + '）') + '">' +
-            fmtQty(s.qty) + (s.all ? '<span class="mwi-tag">全部</span>' : '') +
-          '</span>' +
+          qtyCell +
           '<span class="num">' + (ask == null ? '—' : fmt(ask)) + '</span>' +
           '<span class="num">' + (bid == null ? '—' : fmt(bid)) + '</span>' +
           '<span class="num mwi-price">' + priceCellHtml('swap', s, p.value) + '</span>' +
           '<span class="num">' + subtotal + '</span>' +
-          '<span class="mwi-op"><button class="mwi-btn danger mwi-del" data-act="del-swap" data-id="' + esc(s.id) + '">删除</button></span>' +
+          '<span class="mwi-op"><button class="mwi-btn danger mwi-del" data-act="del-swap" data-id="' + esc(s.id) + '"' +
+            (actionId ? ' data-action-id="' + esc(actionId) + '"' : '') + '>删除</button></span>' +
         '</div>';
       }).join('') +
-    '</div>' +
-    '<div class="mwi-dim" style="margin-top:6px">置换卖出按 4% 扣税（按买价或卖价估值都扣）；心愿购买不扣税。装备/市场挂单的物品需要先卸下/下架再卖出。</div>';
+    '</div>';
+  }
+
+  function actionItemKeys() {
+    const keys = {};
+    for (let i = 0; i < state.actions.length; i++) {
+      const outs = state.actions[i].outputs || [];
+      for (let j = 0; j < outs.length; j++) keys[outs[j] + '|0'] = true;
+    }
+    for (let i = 0; i < state.swaps.length; i++) {
+      const s = state.swaps[i];
+      if (s.actionIds && s.actionIds.length) keys[s.hrid + '|' + s.enh] = true;
+    }
+    return keys;
+  }
+
+  function swapList() {
+    const actionKeys = actionItemKeys();
+    const list = state.swaps.filter(function (s) {
+      if ((s.actionIds && s.actionIds.length) || s.actionId) return false;
+      return !actionKeys[s.hrid + '|' + s.enh];
+    });
+    if (!list.length) {
+      return '<div class="mwi-section">置换物品清单</div>' +
+        '<div class="mwi-dim">当前没有独立的置换物品；动作产出请在置换动作清单中展开查看。</div>';
+    }
+    return '<div class="mwi-section">置换物品清单</div>' +
+      swapTableHtml(list) +
+      '<div class="mwi-dim" style="margin-top:6px">置换卖出按 4% 扣税（按买价或卖价估值都扣）；心愿购买不扣税。装备/市场挂单的物品需要先卸下/下架再卖出。</div>';
   }
 
   function evalSheet(ev) {
@@ -1756,6 +2638,73 @@
       }, 0);
       return;
     }
+    if (act === 'action-tab') {
+      rt.actionDraft.tab = el.dataset.tab === 'combat' ? 'combat' : 'life';
+      render(); return;
+    }
+    if (act === 'combat-mode') {
+      rt.actionDraft.combatMode = el.dataset.mode || 'solo';
+      rt.actionDraft.combatAction = '';
+      rt.actionDraft.combatQuery = '';
+      rt.actionDraft.tier = 0;
+      render(); return;
+    }
+    if (act === 'select-life-action') {
+      const act = lifeActionByHrid(el.dataset.hrid);
+      if (!act) return;
+      rt.actionDraft.lifeAction = act.actionHrid;
+      rt.actionDraft.lifeActionQuery = lifeActionDisplay(act);
+      render(); return;
+    }
+    if (act === 'select-combat-action') {
+      const act = combatActionByHrid(rt.actionDraft.combatMode, el.dataset.hrid);
+      if (!act) return;
+      rt.actionDraft.combatAction = act.actionHrid;
+      rt.actionDraft.combatQuery = act.name;
+      rt.actionDraft.tier = 0;
+      render(); return;
+    }
+    if (act === 'add-action') {
+      addActionFromDraft(); return;
+    }
+    if (act === 'cancel-action') {
+      resetActionDraft(); render(); return;
+    }
+    if (act === 'toggle-action') {
+      const id = el.dataset.id;
+      rt.expandedActions[id] = !rt.expandedActions[id];
+      render(); return;
+    }
+    if (act === 'del-action') {
+      const id = el.dataset.id;
+      const a = state.actions.find(function (x) { return x.id === id; });
+      if (a) {
+        const hrids = a.outputs && a.outputs.length
+          ? a.outputs.slice()
+          : state.swaps.filter(function (s) { return (s.actionIds || []).indexOf(id) !== -1; })
+              .map(function (s) { return s.hrid; });
+        const drop = {};
+        for (let i = 0; i < hrids.length; i++) {
+          const sw = state.swaps.find(function (s) {
+            return s.hrid === hrids[i] && s.enh === 0 && (s.loc || INV_LOC) === INV_LOC;
+          });
+          if (!sw) continue;
+          sw.actionIds = (sw.actionIds || []).filter(function (x) { return x !== id; });
+          if (!sw.actionIds.length && sw.manual === false) drop[sw.id] = true;
+        }
+        state.swaps = state.swaps.filter(function (s) { return !drop[s.id]; });
+        state.actions = state.actions.filter(function (x) { return x.id !== id; });
+      }
+      if (rt.priceEdit) rt.priceEdit = null;
+      delete rt.expandedActions[id];
+      saveState(); render(); return;
+    }
+    if (act === 'refresh-all') {
+      if (rt.loadingMarket || rt.inventoryLoading) return;
+      ensureMarket(true);
+      refreshInventory();
+      return;
+    }
     if (act === 'refresh') {
       ensureMarket(true); return;
     }
@@ -1772,6 +2721,8 @@
       rt.priceEdit = null;
       state.wishes = [];
       state.swaps = [];
+      state.actions = [];
+      rt.expandedActions = {};
       rt.modal = null;
       saveState(); render(); return;
     }
@@ -1811,14 +2762,41 @@
       d.hrid = el.dataset.hrid;
       d.enh = Number(el.dataset.enh) || 0;
       d.q = el.dataset.name || displayName(d.hrid, d.enh);
-      d.qty = 1;
-      d.all = false;
       d.loc = el.dataset.loc || INV_LOC;
+      const assigned = swapAssigned(d.hrid, d.enh, d.loc);
+      const avail = Math.max(0, locQty(d.hrid, d.enh, d.loc) - assigned);
+      d.qty = d.loc.indexOf('/item_locations/market') === 0 ? Math.max(1, avail) : 1;
+      d.all = false;
       render(); return;
     }
     if (act === 'del-swap') {
       if (rt.priceEdit && rt.priceEdit.id === el.dataset.id) rt.priceEdit = null;
-      state.swaps = state.swaps.filter(function (s) { return s.id !== el.dataset.id; });
+      const actionId = el.dataset.actionId;
+      const removed = state.swaps.find(function (s) { return s.id === el.dataset.id; });
+      if (!removed) return;
+      if (actionId) {
+        const a = state.actions.find(function (x) { return x.id === actionId; });
+        if (a && a.outputs) a.outputs = a.outputs.filter(function (h) { return h !== removed.hrid; });
+        removed.actionIds = (removed.actionIds || []).filter(function (x) { return x !== actionId; });
+        if (!removed.actionIds.length && removed.manual === false) {
+          state.swaps = state.swaps.filter(function (s) { return s.id !== removed.id; });
+        }
+        if (a && (!a.outputs || !a.outputs.length)) {
+          state.actions = state.actions.filter(function (x) { return x.id !== a.id; });
+          delete rt.expandedActions[a.id];
+        }
+      } else {
+        state.swaps = state.swaps.filter(function (s) { return s.id !== removed.id; });
+        state.actions.forEach(function (a) {
+          if (a.outputs) a.outputs = a.outputs.filter(function (h) { return h !== removed.hrid; });
+        });
+        const empty = {};
+        state.actions = state.actions.filter(function (a) {
+          if (!a.outputs || !a.outputs.length) { empty[a.id] = true; return false; }
+          return true;
+        });
+        Object.keys(empty).forEach(function (id) { delete rt.expandedActions[id]; });
+      }
       saveState(); render(); return;
     }
   }
@@ -1838,6 +2816,26 @@
       rt.draft.wish.enh = e.target.value;
     } else if (role === 'swap-qty') {
       rt.draft.swap.qty = e.target.value;
+    } else if (role === 'life-action-search') {
+      const d = rt.actionDraft;
+      d.lifeActionQuery = e.target.value;
+      d.lifeAction = '';
+      const sel = rt.overlay && rt.overlay.querySelector('.mwi-action-selected');
+      if (sel) sel.hidden = true;
+      const addBtn = rt.overlay && rt.overlay.querySelector('[data-act="add-action"]');
+      if (addBtn) addBtn.disabled = true;
+      const box = rt.overlay && rt.overlay.querySelector('[data-role="life-action-results"]');
+      if (box) { box.hidden = false; box.innerHTML = lifeActionResultsHtml(); }
+    } else if (role === 'combat-action-search') {
+      const d = rt.actionDraft;
+      d.combatQuery = e.target.value;
+      d.combatAction = '';
+      const sel = rt.overlay && rt.overlay.querySelector('.mwi-action-selected');
+      if (sel) sel.hidden = true;
+      const addBtn = rt.overlay && rt.overlay.querySelector('[data-act="add-action"]');
+      if (addBtn) addBtn.disabled = true;
+      const box = rt.overlay && rt.overlay.querySelector('[data-role="combat-action-results"]');
+      if (box) { box.hidden = false; box.innerHTML = combatActionResultsHtml(); }
     } else if (role === 'price-input') {
       if (rt.priceEdit) rt.priceEdit.value = e.target.value;
     }
@@ -1872,6 +2870,23 @@
       d.all = !!e.target.checked;
       if (d.all && d.hrid) d.qty = locQty(d.hrid, d.enh, d.loc || INV_LOC);
       render();
+    } else if (role === 'life-type') {
+      const d = rt.actionDraft;
+      d.lifeType = e.target.value;
+      d.lifeAction = '';
+      d.lifeActionQuery = '';
+      const t = lifeTypeByKey(d.lifeType);
+      if (t && t.actionHrid) {
+        const act = lifeActionByHrid(t.actionHrid);
+        if (act) {
+          d.lifeAction = act.actionHrid;
+          d.lifeActionQuery = lifeActionDisplay(act);
+        }
+      }
+      render();
+    } else if (role === 'combat-tier') {
+      rt.actionDraft.tier = Math.max(0, Number(e.target.value) || 0);
+      render();
     } else if (role === 'price-input') {
       if (rt.priceEdit) rt.priceEdit.value = e.target.value;
       commitPriceEdit();
@@ -1880,6 +2895,16 @@
 
   function onFocusIn(e) {
     const role = e.target.dataset ? e.target.dataset.role : '';
+    if (role === 'life-action-search') {
+      const box = rt.overlay.querySelector('[data-role="life-action-results"]');
+      if (box) { box.hidden = false; box.innerHTML = lifeActionResultsHtml(); }
+      return;
+    }
+    if (role === 'combat-action-search') {
+      const box = rt.overlay.querySelector('[data-role="combat-action-results"]');
+      if (box) { box.hidden = false; box.innerHTML = combatActionResultsHtml(); }
+      return;
+    }
     if (role !== 'wish-search' && role !== 'swap-search') return;
     const kind = role === 'wish-search' ? 'wish' : 'swap';
     const box = rt.overlay.querySelector('[data-role="' + kind + '-results"]');
@@ -1942,13 +2967,14 @@
     if (!d.hrid) return;
     const enh = Number(d.enh) || 0;
     const loc = d.loc || INV_LOC;
-    const stock = locQty(d.hrid, enh, loc);
+    const allStock = allQty(d.hrid, enh, loc);
     const all = !!d.all;
     const same = function (s) {
       return s.hrid === d.hrid && s.enh === enh && (s.loc || INV_LOC) === loc;
     };
 
     if (all) {
+      const stock = allStock;
       if (stock <= 0) return;
       const allSame = state.swaps.filter(function (s) { return s.all && same(s); });
       if (allSame.length) {
@@ -1957,18 +2983,21 @@
         state.swaps = state.swaps.filter(function (s) { return s === keep || !same(s); });
       } else {
         state.swaps = state.swaps.filter(function (s) { return !same(s); });
-        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true, loc: loc, customPrice: null });
+        state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: stock, all: true, loc: loc, customPrice: null, manual: true, actionIds: [] });
       }
+      syncAllSwaps();
       resetDraft('swap');
       saveState(); render();
       return;
     }
 
     const assigned = swapAssigned(d.hrid, enh, loc);
+    const stock = locQty(d.hrid, enh, loc);
     const max = Math.max(0, stock - assigned);
     if (max <= 0) return;
     const qty = Math.min(max, Math.max(1, Math.floor(Number(d.qty) || 1)));
-    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false, loc: loc, customPrice: null });
+    state.swaps.push({ id: uid(), hrid: d.hrid, enh: enh, qty: qty, all: false, loc: loc, customPrice: null, manual: true, actionIds: [] });
+    syncAllSwaps();
     resetDraft('swap');
     saveState(); render();
   }
@@ -2353,7 +3382,7 @@
       .mwi-subtabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid #2f3850; }
       .mwi-notice { margin: -2px 0 8px; color: #9fb4e0; font-size: 12px; }
       .mwi-subtab { background: transparent; border: 0; color: #8f9ab3; padding: 4px 7px; cursor: pointer; border-bottom: 2px solid transparent; font: inherit; font-size: 13px; width: auto; min-width: 0; }
-      .mwi-subtab.active { color: #f0c56a; border-bottom-color: #f0c56a; }
+      .mwi-subtab.active { background: #f5b800; color: #1a1a1a; border-bottom-color: #f5b800; border-radius: 3px 3px 0 0; font-weight: 600; }
       .mwi-savings-overlay .mwi-btn {
         display: inline-flex; align-items: center; justify-content: center;
         flex: 0 0 auto !important;
@@ -2367,17 +3396,37 @@
         appearance: none; -webkit-appearance: none;
       }
       .mwi-savings-overlay .mwi-btn:hover { background: #35466a; }
-      .mwi-savings-overlay .mwi-btn.primary { background: #3d5178; border-color: #5e75a3; color: #ffe2a0; }
+      .mwi-savings-overlay .mwi-btn.primary { background: #f5b800; border-color: #ffd45e; color: #1a1a1a; font-weight: 600; box-shadow: 0 0 0 1px rgba(255, 212, 94, .25), 0 0 8px rgba(245, 184, 0, .18); }
+      .mwi-savings-overlay .mwi-btn.primary:hover { background: #ffc21a; }
       .mwi-savings-overlay .mwi-btn.danger { background: #4a2a32; border-color: #6d3a45; color: #ffb0b0; }
       .mwi-savings-overlay .mwi-btn:disabled { opacity: .5; cursor: default; }
       .mwi-savings-overlay .mwi-btn.mwi-del { padding: 0 5px !important; }
       .mwi-add { background: #232a3d; border: 1px solid #2f3850; border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+      .mwi-select { background: #151a28; border: 1px solid #3a4a6b; color: #e8e8f2; border-radius: 3px; padding: 3px 6px; font: inherit; font-size: 12px; }
+      .mwi-field { display: inline-flex; align-items: center; gap: 6px; margin: 0 8px 6px 0; }
+      .mwi-action-add { background: #232a3d; border: 1px solid #2f3850; border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+      .mwi-action-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+      .mwi-action-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .mwi-action-combo { flex: 1 1 240px; min-width: 180px; }
+      .mwi-action-combo .mwi-input { width: 100%; }
+      .mwi-action-buttons { display: flex; gap: 6px; margin-left: auto; }
+      .mwi-action-selected { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 6px; background: #1b2336; border-radius: 3px; }
+      .mwi-action-card { border-bottom: 1px solid #2f3850; padding: 5px 0; }
+      .mwi-action-card:last-child { border-bottom: 0; }
+      .mwi-action-row { display: flex; align-items: center; gap: 6px; }
+      .mwi-action-main { flex: 1; min-width: 0; }
+      .mwi-action-name { font-size: 13px; color: #dce6ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mwi-action-items { margin: 6px 0 2px 14px; }
+      .mwi-all-tag { cursor: help; }
+      .mwi-action-buttons .mwi-btn { white-space: nowrap; }
       .mwi-combo { position: relative; }
       .mwi-input { background: #151a28; border: 1px solid #3a4a6b; color: #e8e8f2; border-radius: 3px; padding: 3px 6px; font: inherit; font-size: 12px; }
       .mwi-input::placeholder { color: #6a6a80; }
       .mwi-results { position: absolute; left: 0; right: 0; top: 100%; z-index: 5; max-height: 260px; overflow: auto; background: #232a3d; border: 1px solid #3a4a6b; border-radius: 0 0 4px 4px; }
       .mwi-result { display: flex; align-items: center; gap: 7px; padding: 4px 7px; cursor: pointer; font-size: 12px; }
       .mwi-result:hover { background: #2e3a52; }
+      .mwi-result.disabled { opacity: .45; cursor: not-allowed; filter: grayscale(1); }
+      .mwi-result.disabled:hover { background: transparent; }
       .mwi-tag { display: inline-block; padding: 0 3px; margin-left: 2px; border: 1px solid #5e75a3; border-radius: 2px; font-size: 10px; line-height: 14px; color: #9fb4e0; }
       .mwi-tag.warn { border-color: #7a3030; color: #ffb0b0; }
       .mwi-icon { width: 22px; height: 22px; flex: 0 0 22px; }
@@ -2392,15 +3441,16 @@
       .mwi-price-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
       .mwi-table { width: 100%; overflow-x: auto; }
       .mwi-tr { display: grid; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid #2a3247; min-width: 0; }
-      .mwi-wish-tr { grid-template-columns: 42px 32px 46px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
-      .mwi-swap-tr { grid-template-columns: 32px 86px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
+      .mwi-wish-tr { grid-template-columns: 46px 32px 46px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
+      .mwi-swap-tr { grid-template-columns: 32px 58px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
+      .mwi-action-items .mwi-swap-tr { grid-template-columns: 32px 40px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
       .mwi-th { color: #8f9ab3; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #2f3850; }
       .mwi-tr .num { text-align: right; white-space: nowrap; }
       .mwi-item { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; }
       .mwi-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .mwi-op { text-align: right; }
-      .mwi-prio { display: flex; flex-direction: column; align-items: center; gap: 0; color: #8f9ab3; font-size: 11px; }
-      .mwi-arrows { display: flex; flex-direction: column; gap: 0; }
+      .mwi-prio { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 2px; color: #8f9ab3; font-size: 11px; }
+      .mwi-arrows { display: flex; flex-direction: row; gap: 0; }
       .mwi-savings-overlay .mwi-arrows .mwi-btn { width: 16px !important; min-width: 16px !important; padding: 0 !important; font-size: 10px !important; line-height: 13px !important; }
       .mwi-row { display: flex; align-items: center; gap: 7px; padding: 7px 0; border-bottom: 1px solid #2a3247; }
       .mwi-row > .mwi-icon { flex: 0 0 22px; }
@@ -2530,11 +3580,11 @@
       if (!rt.names && needsNames()) loadNames(false);
     }, 1500);
     setTimeout(function () {
-      try {
-        const live = readLiveItems();
-        if (live && live.length && live.length > rt.inventory.length) setInventory(live);
-      } catch (e) { /* ignore */ }
+      refreshInventory(true);
     }, 3000);
+    setTimeout(function () {
+      refreshInventory(true);
+    }, 8000);
     ensureMarket(false);
     ensureUI();
     setInterval(ensureUI, 1000);
