@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.0
+// @version      0.8.1
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -2022,8 +2022,8 @@
     return '<div class="mwi-section">心愿列表</div>' +
       '<div class="mwi-table">' +
       '<div class="mwi-tr mwi-wish-tr mwi-th">' +
-        '<span>#</span><span>物品</span><span class="num">数量</span>' +
-        '<span class="num">卖价</span><span class="num">买价</span><span class="num">自定义</span><span class="num">小计</span><span></span>' +
+        '<span>#</span><span>物品</span><span class="num mwi-qty">数量</span>' +
+        '<span class="num">卖价</span><span class="num">买价</span><span class="num mwi-price-head">自定义</span><span class="num">小计</span><span></span>' +
       '</div>' +
       ev.rows.map(function (r, i) {
         const sell = r.ask == null ? '—' : fmt(r.ask);
@@ -2038,7 +2038,7 @@
             (i + 1) +
           '</span>' +
           '<span class="mwi-item" title="' + esc(displayName(r.hrid, r.enh)) + '">' + icon(r.hrid) + '</span>' +
-          '<span class="num">' + r.qty + '</span>' +
+          '<span class="num mwi-qty">' + r.qty + '</span>' +
           '<span class="num">' + sell + '</span>' +
           '<span class="num">' + buy + '</span>' +
           '<span class="num mwi-price">' + priceCellHtml('wish', { id: r.id, customPrice: r.customPrice }, r.basisValue) + '</span>' +
@@ -2458,8 +2458,8 @@
     const swapTaxFactor = 1 - SWAP_TAX;
     return '<div class="mwi-table">' +
       '<div class="mwi-tr mwi-swap-tr mwi-th">' +
-        '<span>物品</span><span class="num">数量</span><span class="num">卖价</span>' +
-        '<span class="num">买价</span><span class="num">自定义</span><span class="num">税后小计</span><span></span>' +
+        '<span>物品</span><span class="num mwi-qty">数量</span><span class="num">卖价</span>' +
+        '<span class="num">买价</span><span class="num mwi-price-head">自定义</span><span class="num">税后小计</span><span></span>' +
       '</div>' +
       list.map(function (s) {
         const q = rt.market && rt.market[s.hrid] && rt.market[s.hrid][String(s.enh)];
@@ -2473,8 +2473,8 @@
         const invStock = locQty(s.hrid, s.enh, INV_LOC);
         const mktStock = marketQty(s.hrid, s.enh);
         const qtyCell = s.all
-          ? '<span class="num mwi-all-cell" title="库存：' + invStock + ' 市场：' + mktStock + '"><span class="mwi-tag mwi-all-tag" title="库存：' + invStock + ' 市场：' + mktStock + '">全部</span></span>'
-          : '<span class="num" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + '）') + '">' + fmtQty(s.qty) + '</span>';
+          ? '<span class="num mwi-qty mwi-all-cell" title="库存：' + invStock + ' 市场：' + mktStock + '"><span class="mwi-tag mwi-all-tag" title="库存：' + invStock + ' 市场：' + mktStock + '">全部</span></span>'
+          : '<span class="num mwi-qty" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + '）') + '">' + fmtQty(s.qty) + '</span>';
         return '<div class="mwi-tr mwi-swap-tr">' +
           '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（' + locLabel(loc) + ' ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
           qtyCell +
@@ -3379,10 +3379,11 @@
       .mwi-title { font-size: 16px; font-weight: 600; }
       .mwi-actions { position: absolute; right: 0; top: 0; display: flex; gap: 4px; }
       .mwi-left-actions { position: absolute; left: 0; top: 0; display: flex; gap: 4px; }
-      .mwi-subtabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid #2f3850; }
+      .mwi-subtabs { display: flex; gap: 18px; margin-bottom: 10px; border-bottom: 1px solid #2f3850; }
       .mwi-notice { margin: -2px 0 8px; color: #9fb4e0; font-size: 12px; }
-      .mwi-subtab { background: transparent; border: 0; color: #8f9ab3; padding: 4px 7px; cursor: pointer; border-bottom: 2px solid transparent; font: inherit; font-size: 13px; width: auto; min-width: 0; }
-      .mwi-subtab.active { background: #f5b800; color: #1a1a1a; border-bottom-color: #f5b800; border-radius: 3px 3px 0 0; font-weight: 600; }
+      .mwi-subtab { background: transparent; border: 0; color: #9aa7c7; padding: 6px 2px; cursor: pointer; border-bottom: 2px solid transparent; font: inherit; font-size: 15px; width: auto; min-width: 0; }
+      .mwi-subtab:hover { color: #cfe0ff; }
+      .mwi-subtab.active { background: transparent; color: #6ee7e0; border-bottom-color: #6ee7e0; font-weight: 600; }
       .mwi-savings-overlay .mwi-btn {
         display: inline-flex; align-items: center; justify-content: center;
         flex: 0 0 auto !important;
@@ -3433,19 +3434,21 @@
       .mwi-icon-ph { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: #2e3a52; border-radius: 3px; font-size: 11px; }
       .mwi-pending { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 7px; font-size: 12px; }
       .mwi-check { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
-      .mwi-price { overflow: hidden; }
-      .mwi-price-btn { display: block; width: 100%; height: 18px; padding: 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #3d4e70; border-radius: 3px; background: #2b3852; color: #cfe0ff; font-family: inherit; font-size: 11px; cursor: pointer; box-sizing: border-box; }
+      .mwi-price { display: flex; justify-content: center; overflow: hidden; }
+      .mwi-price-btn { display: block; width: 100%; max-width: 58px; height: 18px; margin: 0 auto; padding: 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #3d4e70; border-radius: 3px; background: #2b3852; color: #cfe0ff; font-family: inherit; font-size: 11px; cursor: pointer; box-sizing: border-box; }
       .mwi-price-btn:hover { background: #3d5178; color: #ffe08a; }
-      .mwi-price-input { width: 100%; height: 18px; padding: 0 2px; font-size: 11px; -moz-appearance: textfield; appearance: textfield; box-sizing: border-box; }
+      .mwi-price-input { width: 100%; max-width: 58px; height: 18px; margin: 0 auto; padding: 0 2px; font-size: 11px; -moz-appearance: textfield; appearance: textfield; box-sizing: border-box; }
       .mwi-price-input::-webkit-outer-spin-button,
       .mwi-price-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
       .mwi-table { width: 100%; overflow-x: auto; }
       .mwi-tr { display: grid; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px solid #2a3247; min-width: 0; }
-      .mwi-wish-tr { grid-template-columns: 46px 32px 46px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
-      .mwi-swap-tr { grid-template-columns: 32px 58px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
+      .mwi-wish-tr { grid-template-columns: 46px 32px minmax(46px, .65fr) minmax(60px, 1.15fr) minmax(60px, 1.15fr) minmax(52px, .85fr) minmax(60px, 1.1fr) 46px; }
+      .mwi-swap-tr { grid-template-columns: 32px minmax(46px, .65fr) minmax(60px, 1.15fr) minmax(60px, 1.15fr) minmax(52px, .85fr) minmax(60px, 1.1fr) 46px; }
       .mwi-action-items .mwi-swap-tr { grid-template-columns: 32px 40px minmax(48px, 1fr) minmax(48px, 1fr) 52px minmax(56px, 1fr) 46px; }
       .mwi-th { color: #8f9ab3; font-size: 11px; padding: 2px 0; border-bottom: 1px solid #2f3850; }
       .mwi-tr .num { text-align: right; white-space: nowrap; }
+      .mwi-tr .mwi-qty { text-align: center; }
+      .mwi-tr .mwi-price-head { text-align: center; }
       .mwi-item { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; }
       .mwi-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .mwi-op { text-align: right; }
