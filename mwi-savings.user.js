@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.2
+// @version      0.8.3
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -3049,12 +3049,35 @@
     return node && node.parentElement ? node.parentElement : (node || document.body);
   }
 
-  function makeTab() {
+  function makeTab(list) {
+    const tabs = list ? list.querySelectorAll('[role="tab"]') : [];
+    let src = null;
+    for (let i = 0; i < tabs.length; i++) {
+      if (tabs[i].getAttribute('aria-selected') !== 'true' && tabs[i].textContent.trim()) {
+        src = tabs[i];
+        break;
+      }
+    }
+    if (!src && tabs.length) src = tabs[0];
+
     const tab = document.createElement('button');
     tab.type = 'button';
-    tab.className = 'mwi-tab';
-    tab.textContent = '攒钱';
+    if (src) {
+      let cls = src.className || '';
+      cls = cls.replace(/\bMui-selected\b/g, '').replace(/\bactive\b/g, '').trim();
+      tab.className = cls + ' mwi-tab';
+      const srcWrap = src.querySelector('.MuiTab-wrapper');
+      const wrap = document.createElement('span');
+      wrap.className = srcWrap ? srcWrap.className : 'MuiTab-wrapper';
+      wrap.textContent = '攒钱';
+      tab.appendChild(wrap);
+    } else {
+      tab.className = 'mwi-tab mwi-tab-fallback';
+      tab.textContent = '攒钱';
+    }
     tab.dataset.mwiTab = '1';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', 'false');
     tab.setAttribute('aria-pressed', 'false');
     return tab;
   }
@@ -3139,6 +3162,13 @@
       if (!a.minHeight || a.minHeight === '0px') a.minHeight = FALLBACK_TAB.active.minHeight;
       if (!a.fontSize || a.fontSize === '0px') a.fontSize = FALLBACK_TAB.active.fontSize;
     }
+    // 游戏选中页签的字体/尺寸可能比普通页签大；攒钱页签统一使用普通页签的排版。
+    const metricKeys = ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
+      'textTransform', 'padding', 'minHeight', 'minWidth', 'height', 'margin', 'flex', 'alignSelf', 'borderRadius'];
+    for (let i = 0; i < metricKeys.length; i++) {
+      const k = metricKeys[i];
+      if (n[k]) a[k] = n[k];
+    }
     rt.tabStyle = { normal: n, active: a };
   }
 
@@ -3197,7 +3227,7 @@
 
     const st = rt.tabStyle || FALLBACK_TAB;
     if (!rt.tab || !list.contains(rt.tab)) {
-      const tab = makeTab();
+      const tab = makeTab(list);
       applyTabStyle(tab, st.normal);
       placeOwnTab(list, tab);
       rt.tab = tab;
@@ -3372,7 +3402,8 @@
         color: #e8e8f2;
         font-family: inherit; font-size: 13px; border: 1px solid #2f3850;
       }
-      .mwi-tab {
+      .mwi-tab { cursor: pointer; text-decoration: none; }
+      .mwi-tab-fallback {
         display: inline-flex; align-items: center; justify-content: center;
         align-self: stretch; box-sizing: border-box;
         white-space: nowrap; cursor: pointer; text-decoration: none;
@@ -3381,8 +3412,8 @@
         background: #2a3550; color: #d8dce8;
         font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1.4;
       }
-      .mwi-tab:hover { filter: brightness(1.08); }
-      .mwi-tab.active { background: #2f6fe4; border-color: #2f6fe4; color: #fff; }
+      .mwi-tab-fallback:hover { filter: brightness(1.08); }
+      .mwi-tab-fallback.active { background: #2f6fe4; border-color: #2f6fe4; color: #fff; }
       .mwi-wrap { padding: 10px 12px 24px; }
       .mwi-top { position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; min-height: 24px; }
       .mwi-title { font-size: 16px; font-weight: 600; }
