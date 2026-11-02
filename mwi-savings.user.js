@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.1
+// @version      0.8.2
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -400,6 +400,7 @@
   let state = loadState();
   let saveTimer = null;
   let renderTimer = null;
+  let inventoryRefreshTimer = null;
   let spriteBaseCache = null;
   let styleInjected = false;
 
@@ -1559,6 +1560,14 @@
         scheduleRender();
       }
     }, 0);
+  }
+
+  function scheduleInventoryRefresh() {
+    if (inventoryRefreshTimer) clearTimeout(inventoryRefreshTimer);
+    inventoryRefreshTimer = setTimeout(function () {
+      inventoryRefreshTimer = null;
+      refreshInventory(true);
+    }, 180);
   }
 
   function onCharacterSwitch() {
@@ -3302,7 +3311,7 @@
       if (!rt.overlay) {
         const ov = document.createElement('div');
         ov.className = 'mwi-savings-overlay';
-        ov.style.cssText = 'position:fixed;left:32px;right:32px;top:70px;bottom:32px;display:block;z-index:9999;';
+        ov.style.cssText = 'position:fixed;left:32px;right:32px;top:70px;bottom:32px;display:block;z-index:100;';
         document.body.appendChild(ov);
         rt.overlay = ov;
         rt.fixed = true;
@@ -3357,7 +3366,7 @@
     styleInjected = true;
     const css = `
       .mwi-savings-overlay {
-        position: fixed; display: none; z-index: 1000; overflow: auto;
+        position: fixed; display: none; z-index: 100; overflow: auto;
         box-sizing: border-box;
         background: #1e2233;
         color: #e8e8f2;
@@ -3474,7 +3483,7 @@
       .mwi-daily { margin-top: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
       .mwi-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 10000; }
       .mwi-modal { background: #232a3d; border: 1px solid #3a4a6b; border-radius: 8px; padding: 16px 18px; max-width: 380px; }
-      .mwi-fab { position: fixed; right: 20px; bottom: 20px; z-index: 9999; background: #5a4a1f; color: #ffe2a0; border: 1px solid #8a6a2a; border-radius: 20px; padding: 8px 14px; cursor: pointer; font: inherit; }
+      .mwi-fab { position: fixed; right: 20px; bottom: 20px; z-index: 100; background: #5a4a1f; color: #ffe2a0; border: 1px solid #8a6a2a; border-radius: 20px; padding: 8px 14px; cursor: pointer; font: inherit; }
       @media (max-width: 700px) {
         .mwi-savings-overlay { font-size: 12px; }
         .mwi-cards { gap: 6px; }
@@ -3544,6 +3553,8 @@
             if (raw.indexOf('init_client_data') !== -1 ||
                 raw.indexOf('init_character_data') !== -1 ||
                 raw.indexOf('characterItems') !== -1 ||
+                raw.indexOf('myMarketListingMap') !== -1 ||
+                raw.indexOf('market_listings_updated') !== -1 ||
                 raw.indexOf('market_item_order_books_updated') !== -1) {
               onWs(JSON.parse(raw));
             }
@@ -3565,8 +3576,11 @@
     if (obj.type === 'init_character_data' && rt.characterID != null) {
       onCharacterSwitch();
     }
-    if (Array.isArray(obj.characterItems)) {
-      setInventory(obj.characterItems);
+    if (obj.type === 'init_character_data' ||
+        obj.type === 'market_listings_updated' ||
+        obj.myMarketListingMap ||
+        Array.isArray(obj.characterItems)) {
+      scheduleInventoryRefresh();
     }
     if (obj.marketItemOrderBooks) {
       applyOrderBook(obj.marketItemOrderBooks);
