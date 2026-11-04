@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.5
+// @version      0.8.8
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -426,6 +426,8 @@
     actionData: null,
     nameCache: Object.create(null),
     invIndex: null,
+    inventoryWs: null,
+    listingsWs: null,
     expandedActions: {},
     actionDraft: {
       tab: 'life',
@@ -1156,16 +1158,16 @@
     return null;
   }
 
+  let pushSeq = 0;
   function pushStateItem(out, seen, it, key) {
     if (!isItemStack(it)) return;
     const loc = stackLoc(it, key);
     if (!loc) return;
     const hrid = it.itemHrid || it.hrid;
-    const uid = it.id || it.hash;
-    const dedupe = uid || (hrid + '|' + (it.enhancementLevel || 0) + '|' + loc + '|' +
-      (it.count != null ? it.count : it.quantity));
-    if (seen[dedupe]) return;
-    seen[dedupe] = true;
+    // 同一物品可以有多条挂单，必须用唯一 key，不能用「物品+数量」去重
+    const uid = it.hash || it.id || ((it.itemHrid || it.hrid) + '#' + (pushSeq++));
+    if (seen[uid]) return;
+    seen[uid] = true;
     if (it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location) {
       out.push(it);
     } else {
@@ -1175,8 +1177,21 @@
     }
   }
 
+  function mapEntries(raw) {
+    const out = [];
+    if (!raw || typeof raw !== 'object') return out;
+    if (typeof raw.forEach === 'function' && typeof raw.entries === 'function') {
+      raw.forEach(function (v, k) { out.push([k, v]); });
+      return out;
+    }
+    const keys = Object.keys(raw);
+    for (let i = 0; i < keys.length; i++) out.push([keys[i], raw[keys[i]]]);
+    return out;
+  }
+
   function readMyMarketListings(st) {
-    const raw = st.myMarketListingMap;
+    if (!st) return [];
+    const raw = st.myMarketListingMap || st.myMarketListings;
     if (!raw) return [];
     const out = [];
     const seen = {};
@@ -1210,17 +1225,25 @@
 
     function walk(obj, depth) {
       if (!obj || typeof obj !== 'object' || depth < 0) return;
-      if (Array.isArray(obj) || typeof obj.values === 'function') {
-        const vals = asArray(obj) || [];
-        for (let i = 0; i < vals.length; i++) walk(vals[i], depth - 1);
+      // Map（myMarketListingMap 就是 Map<id, listing>）与数组都需要逐项展开
+      if (Array.isArray(obj) || typeof obj.forEach === 'function') {
+        const entries = Array.isArray(obj) ? obj.map(function (v, i) { return [i, v]; }) : mapEntries(obj);
+        for (let i = 0; i < entries.length; i++) walk(entries[i][1], depth - 1);
         return;
       }
       const hrid = obj.itemHrid || (obj.item && (obj.item.itemHrid || obj.item.hrid)) || obj.hrid;
       if (hrid && hrid.indexOf('/items/') === 0) {
-        let qty = maxQty(obj);
+        const orderRaw = firstNumber(obj.orderQuantity, obj.remainingOrderQuantity);
         const filled = firstNumber(obj.filledQuantity, obj.quantityFilled, obj.filled);
-        if (qty == null) qty = 1;
-        if (filled != null && filled > 0 && qty > filled) qty -= filled;
+        let qty;
+        if (orderRaw != null) {
+          // 游戏挂单：可用数量 = 下单数量 - 已成交数量
+          qty = orderRaw - (filled || 0);
+        } else {
+          qty = maxQty(obj);
+          if (qty == null) qty = 1;
+          if (filled != null && filled > 0 && qty > filled) qty -= filled;
+        }
         if (!(qty > 0)) return;
         const enh = Number(obj.enhancementLevel || obj.enhancement || 0) || 0;
         const id = obj.id || obj.hash || (hrid + '|' + enh + '|' + qty + '|' + (obj.price || '') + '|' + out.length);
@@ -1228,6 +1251,7 @@
         seen[id] = true;
         out.push({
           id: id,
+          hash: 'mk::' + id,
           itemHrid: hrid,
           count: qty,
           enhancementLevel: enh,
@@ -1253,6 +1277,46 @@
     const skipKey = /Detail|Dict|Table|Translations|Requirement|Experience|Category|Type|Config|gameConn|disconnect|captcha|reconnect|isLoading|versionTimestamp/i;
     const keys = Object.keys(st);
 
+    // 库存/装备是 Map<hash, item>，Map 的值不带 key 信息，需要从 hash 还原位置：
+    // key 形如 `${characterId}::${itemLocationHrid}::${itemHrid}::${enhancementLevel}`
+    function pushFromMap(mapObj, key) {
+      const entries = [];
+      if (typeof mapObj.forEach === 'function' && typeof mapObj.entries === 'function') {
+        mapObj.forEach(function (v, k) { entries.push([k, v]); });
+      } else {
+        const ks = Object.keys(mapObj);
+        for (let i = 0; i < ks.length; i++) entries.push([ks[i], mapObj[ks[i]]]);
+      }
+      for (let i = 0; i < entries.length; i++) {
+        const k = String(entries[i][0]);
+        const v = entries[i][1];
+        if (!v || typeof v !== 'object') continue;
+        const parts = k.split('::');
+        let hrid = v.itemHrid || v.hrid;
+        let loc = v.itemLocationHrid || v.locationHrid || v.itemLocation || v.location;
+        let enh = v.enhancementLevel;
+        if (parts.length >= 4) {
+          if (!loc) loc = parts[1];
+          if (!hrid) hrid = parts[2];
+          if (enh == null) enh = Number(parts[3]);
+        }
+        if (!hrid || hrid.indexOf('/items/') !== 0) continue;
+        const q = Number(v.count != null ? v.count : v.quantity);
+        if (!isFinite(q) || q <= 0) continue;
+        const copy = Object.assign({}, v);
+        copy.itemHrid = hrid;
+        if (!copy.enhancementLevel) copy.enhancementLevel = Number(enh) || 0;
+        if (!copy.itemLocationHrid) copy.itemLocationHrid = loc || renderLocForKey(key);
+        pushStateItem(out, seen, copy, key);
+      }
+    }
+
+    function renderLocForKey(key) {
+      if (/characterItemMap|characterItems/i.test(key)) return INV_LOC;
+      if (/ByLocation/i.test(key)) return EQUIP_LOC;
+      return null;
+    }
+
     function collectNested(obj, key, depth) {
       if (!obj || typeof obj !== 'object' || depth < 0 || seenObjs.has(obj)) return;
       seenObjs.add(obj);
@@ -1260,7 +1324,15 @@
         pushStateItem(out, seen, obj, key);
         return;
       }
-      if (Array.isArray(obj) || typeof obj.values === 'function') {
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) collectNested(obj[i], key, depth - 1);
+        return;
+      }
+      if (typeof obj.forEach === 'function' && typeof obj.entries === 'function') {
+        pushFromMap(obj, key);
+        return;
+      }
+      if (typeof obj.values === 'function') {
         const vals = asArray(obj) || [];
         for (let i = 0; i < vals.length; i++) collectNested(vals[i], key, depth - 1);
         return;
@@ -1277,8 +1349,14 @@
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       if (skipKey.test(key)) continue;
+      // myMarketListingMap 单独处理（按挂单语义解析数量），避免被当成普通物品重复计入
+      if (/myMarketListing/i.test(key)) continue;
       const raw = st[key];
       if (!raw || typeof raw !== 'object') continue;
+      if (typeof raw.forEach === 'function' && typeof raw.entries === 'function') {
+        pushFromMap(raw, key);
+        continue;
+      }
       let arr = null;
       if (Array.isArray(raw) || typeof raw.values === 'function') arr = asArray(raw);
       else arr = Object.values(raw);
@@ -1287,11 +1365,70 @@
       }
     }
     collectNested(st, '', 3);
-    const listings = readMyMarketListings(st);
+    // 市场挂单：state.myMarketListingMap（Map）与 WS 快照合并，保证任一路径可用
+    let listings = readMyMarketListings(st);
+    const wsListings = rt.listingsWs || [];
+    if (wsListings.length) {
+      const has = {};
+      for (let i = 0; i < listings.length; i++) {
+        has[listings[i].itemHrid + '|' + listings[i].enhancementLevel] = true;
+      }
+      for (let i = 0; i < wsListings.length; i++) {
+        const w = wsListings[i];
+        if (!w || !w.itemHrid) continue;
+        const k = w.itemHrid + '|' + (Number(w.enhancementLevel) || 0);
+        if (has[k]) continue;
+        const qty = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
+        if (!(qty > 0)) continue;
+        has[k] = true;
+        listings.push({
+          id: w.id || k,
+          itemHrid: w.itemHrid,
+          count: qty,
+          enhancementLevel: Number(w.enhancementLevel) || 0,
+          itemLocationHrid: MARKET_LOC
+        });
+      }
+    }
     for (let i = 0; i < listings.length; i++) {
-      pushStateItem(out, seen, listings[i], 'myMarketListingMap');
+      const l = listings[i];
+      if (!l || !l.itemHrid) continue;
+      const hrid = l.itemHrid;
+      const enh = Number(l.enhancementLevel) || 0;
+      const dedupe = 'mk|' + hrid + '|' + enh + '|' + l.count + '|' + (l.id || '');
+      if (seen[dedupe]) continue;
+      seen[dedupe] = true;
+      out.push({
+        id: l.id || dedupe,
+        hash: 'mk::' + dedupe,
+        itemHrid: hrid,
+        count: Number(l.count) || 0,
+        enhancementLevel: enh,
+        itemLocationHrid: MARKET_LOC
+      });
     }
     return out;
+  }
+
+  function applyInventorySnapshot(rawItems) {
+    const list = [];
+    for (let i = 0; i < (rawItems || []).length; i++) {
+      const it = rawItems[i];
+      if (!it || typeof it !== 'object') continue;
+      const hrid = it.itemHrid || it.hrid;
+      if (!hrid || hrid.indexOf('/items/') !== 0) continue;
+      const qty = Number(it.count != null ? it.count : it.quantity);
+      if (!(qty > 0)) continue;
+      list.push({
+        hrid: hrid,
+        enh: Number(it.enhancementLevel || it.enhancement || 0) || 0,
+        qty: qty,
+        loc: itemLoc(it)
+      });
+    }
+    if (!list.length) return false;
+    setInventory(list);
+    return true;
   }
 
   function readLiveItems() {
@@ -1300,13 +1437,62 @@
       pageWin.game && pageWin.game.state,
       pageWin.__game && pageWin.__game.state
     ];
+    let best = null;
     for (let i = 0; i < states.length; i++) {
       const st = states[i];
       if (!st) continue;
       const items = readStateItems(st);
-      if (items.length) return items;
+      if (!items.length) continue;
+      // 选包含市场挂单最多的结果；否则优先第一个有内容的
+      const marketCount = items.filter(function (x) {
+        return (x.itemLocationHrid || '').indexOf('/item_locations/market') === 0;
+      }).length;
+      if (!best || marketCount > best.marketCount) best = { items: items, marketCount: marketCount };
+      if (marketCount > 0) break;
+    }
+    if (best && best.items.length) return best.items;
+    if (rt.inventoryWs && rt.inventoryWs.length) {
+      const copy = rt.inventoryWs.slice();
+      const wsList = rt.listingsWs || [];
+      for (let i = 0; i < wsList.length; i++) {
+        const w = wsList[i];
+        if (!w || !w.itemHrid) continue;
+        const qty = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
+        if (!(qty > 0)) continue;
+        copy.push({
+          itemHrid: w.itemHrid,
+          count: qty,
+          enhancementLevel: Number(w.enhancementLevel) || 0,
+          itemLocationHrid: MARKET_LOC
+        });
+      }
+      return copy;
+    }
+    const wsList = rt.listingsWs || [];
+    if (wsList.length) {
+      const copy = [];
+      for (let i = 0; i < wsList.length; i++) {
+        const w = wsList[i];
+        if (!w || !w.itemHrid) continue;
+        const qty = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
+        if (!(qty > 0)) continue;
+        copy.push({
+          itemHrid: w.itemHrid,
+          count: qty,
+          enhancementLevel: Number(w.enhancementLevel) || 0,
+          itemLocationHrid: MARKET_LOC
+        });
+      }
+      if (copy.length) return copy;
     }
     return null;
+  }
+
+  function applyWsListingsFallback(st) {
+    if (!st || !rt.listingsWs || !rt.listingsWs.length) return;
+    const has = readMyMarketListings(st);
+    if (has && has.length) return;
+    st.myMarketListingMap = rt.listingsWs;
   }
 
   function findGoldDeep(root) {
@@ -3634,13 +3820,76 @@
       if (needsNames()) loadNames(false);
       scheduleRender();
     }
+    // 角色初始化/物品更新消息里自带完整库存快照，直接落盘，避免依赖游戏 state 结构。
+    const snapshot = Array.isArray(obj.characterItems) ? obj.characterItems
+      : (Array.isArray(obj.endCharacterItems) ? obj.endCharacterItems : null);    if (snapshot && snapshot.length) {
+      const merged = [];
+      const seenHash = {};
+      const base = rt.inventoryWs || [];
+      for (let i = 0; i < base.length; i++) {
+        const s = base[i];
+        if (!s) continue;
+        const k = s.hash || (s.itemHrid + '|' + s.itemLocationHrid + '|' + s.enhancementLevel);
+        seenHash[k] = true;
+        merged.push(s);
+      }
+      for (let i = 0; i < snapshot.length; i++) {
+        const s = snapshot[i];
+        if (!s || !s.itemHrid) continue;
+        const k = s.hash || (s.itemHrid + '|' + s.itemLocationHrid + '|' + s.enhancementLevel);
+        const idx = merged.findIndex(function (x) {
+          return (x.hash || (x.itemHrid + '|' + x.itemLocationHrid + '|' + x.enhancementLevel)) === k;
+        });
+        if (Number(s.count) === 0) {
+          if (idx !== -1) merged.splice(idx, 1);
+          continue;
+        }
+        if (idx !== -1) merged[idx] = s;
+        else merged.push(s);
+      }
+      rt.inventoryWs = merged;
+      if (!rt.inventory.length) applyInventorySnapshot(merged);
+    }
+    // 市场挂单：init_character_data 里是 myMarketListings 数组，后续更新是 endMarketListings
+    const listingSnap = Array.isArray(obj.myMarketListings) ? obj.myMarketListings
+      : (Array.isArray(obj.endMarketListings) ? obj.endMarketListings : null);
+    if (listingSnap && listingSnap.length) {
+      const base = rt.listingsWs || [];
+      const byId = Object.create(null);
+      const merged = [];
+      function keyOf(x) {
+        return x.id || x.hash || (x.itemHrid + '|' + x.enhancementLevel + '|' + x.price);
+      }
+      for (let i = 0; i < base.length; i++) {
+        const x = base[i];
+        if (!x || !x.itemHrid) continue;
+        const k = keyOf(x);
+        if (byId[k] === undefined) { byId[k] = merged.length; merged.push(x); }
+      }
+      for (let i = 0; i < listingSnap.length; i++) {
+        const x = listingSnap[i];
+        if (!x || !x.itemHrid) continue;
+        const k = keyOf(x);
+        const idx = byId[k];
+        if (!(Number(x.orderQuantity) - Number(x.filledQuantity || 0) > 0)) {
+          if (idx !== undefined) { merged.splice(idx, 1); byId[k] = undefined; }
+          continue;
+        }
+        if (idx !== undefined && merged[idx]) merged[idx] = x;
+        else { byId[k] = merged.length; merged.push(x); }
+      }
+      rt.listingsWs = merged;
+      if (!rt.inventory.length) applyInventorySnapshot(merged);
+    }
     if (obj.type === 'init_character_data' && rt.characterID != null) {
       onCharacterSwitch();
     }
     if (obj.type === 'init_character_data' ||
         obj.type === 'market_listings_updated' ||
         obj.myMarketListingMap ||
-        Array.isArray(obj.characterItems)) {
+        obj.myMarketListings ||
+        listingSnap ||
+        snapshot) {
       scheduleInventoryRefresh();
     }
     if (obj.marketItemOrderBooks) {
@@ -3700,11 +3949,48 @@
     boot();
   }
 
+  // 诊断：控制台执行 __mwiSavings.diag() 可查看数据来源与数量
+  function diag() {
+    const states = [
+      ['mwi.game', pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state],
+      ['game', pageWin.game && pageWin.game.state],
+      ['__game', pageWin.__game && pageWin.__game.state]
+    ];
+    const result = { states: [], listingsWs: (rt.listingsWs || []).length, inventoryWs: (rt.inventoryWs || []).length };
+    for (let i = 0; i < states.length; i++) {
+      const name = states[i][0];
+      const st = states[i][1];
+      if (!st) { result.states.push({ name: name, exists: false }); continue; }
+      const raw = st.myMarketListingMap;
+      const listings = readMyMarketListings(st);
+      result.states.push({
+        name: name,
+        exists: true,
+        hasMap: !!raw,
+        mapKind: raw ? (typeof raw.forEach === 'function' ? 'Map' : (Array.isArray(raw) ? 'Array' : 'Object')) : '-',
+        mapSize: raw && typeof raw.size === 'number' ? raw.size : (raw ? Object.keys(raw).length : 0),
+        parsedListings: listings.length,
+        parsedQty: listings.reduce(function (n, x) { return n + x.count; }, 0),
+        inventoryItems: readStateItems(st).length
+      });
+    }
+    const inv = rt.inventory || [];
+    result.inventory = {
+      total: inv.length,
+      market: inv.filter(function (x) { return (x.loc || '').indexOf('/item_locations/market') === 0; }).length,
+      marketQty: inv.filter(function (x) { return (x.loc || '').indexOf('/item_locations/market') === 0; })
+        .reduce(function (n, x) { return n + x.qty; }, 0)
+    };
+    console.log('[攒钱] 诊断', result);
+    return result;
+  }
+
   const api = {
     get state() { return state; },
     rt: rt,
     render: render,
-    evaluate: evaluate
+    evaluate: evaluate,
+    diag: diag
   };
   pageWin.__mwiSavings = api;
   try { window.__mwiSavings = api; } catch (e) { /* ignore */ }
