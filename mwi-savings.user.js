@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.4
+// @version      0.8.5
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -424,6 +424,8 @@
     modal: null,
     priceEdit: null,
     actionData: null,
+    nameCache: Object.create(null),
+    invIndex: null,
     expandedActions: {},
     actionDraft: {
       tab: 'life',
@@ -540,8 +542,11 @@
   function zhName(hrid) {
     const ov = nameOverride(hrid);
     if (ov) return ov;
+    if (rt.nameCache[hrid] !== undefined) return rt.nameCache[hrid];
     const it = rt.catalog && rt.catalog[hrid];
-    return (rt.names && rt.names[hrid]) || (it && it.nameZh) || '';
+    const v = (rt.names && rt.names[hrid]) || (it && it.nameZh) || '';
+    rt.nameCache[hrid] = v;
+    return v;
   }
 
   function displayName(hrid, enh) {
@@ -572,7 +577,10 @@
 
   function scheduleRender() {
     if (renderTimer) clearTimeout(renderTimer);
-    renderTimer = setTimeout(render, 50);
+    renderTimer = setTimeout(function () {
+      renderTimer = null;
+      render();
+    }, 50);
   }
 
   /* ---------------------------- 状态 ---------------------------- */
@@ -993,6 +1001,7 @@
     const cached = readNamesCache();
     if (cached && cached.data) {
       rt.names = cached.data;
+      rt.nameCache = Object.create(null);
       scheduleRender();
       if (!force && Date.now() - cached.ts < NAMES_TTL) return;
     } else if (rt.names && !force) {
@@ -1013,6 +1022,7 @@
         }
         if (Object.keys(map).length) {
           rt.names = map;
+          rt.nameCache = Object.create(null);
           try { writeStore(NAMES_KEY, { ts: Date.now(), data: map }); } catch (e) { /* 容量 */ }
         }
         lastErr = null;
@@ -1653,6 +1663,7 @@
       });
     }
     rt.inventory = list;
+    rt.invIndex = null;
     let gold = 0;
     for (let i = 0; i < list.length; i++) {
       if (list[i].hrid === '/items/coin' && list[i].loc === INV_LOC) gold += list[i].qty;
@@ -1663,14 +1674,23 @@
     scheduleRender();
   }
 
-  function locQty(hrid, enh, loc) {
-    loc = loc || INV_LOC;
-    let n = 0;
+  function invIndex() {
+    if (rt.invIndex) return rt.invIndex;
+    const map = Object.create(null);
     for (let i = 0; i < rt.inventory.length; i++) {
       const it = rt.inventory[i];
-      if (it.hrid === hrid && it.enh === enh && it.loc === loc) n += it.qty;
+      const k = it.hrid + '|' + it.enh + '|' + it.loc;
+      map[k] = (map[k] || 0) + it.qty;
     }
-    return n;
+    rt.invIndex = map;
+    return map;
+  }
+
+  function locQty(hrid, enh, loc) {
+    loc = loc || INV_LOC;
+    const k = hrid + '|' + enh + '|' + loc;
+    const map = invIndex();
+    return map[k] || 0;
   }
 
   function marketQty(hrid, enh) {
@@ -1923,6 +1943,7 @@
 
   function render() {
     if (!rt.overlay) return;
+    if (rt.overlay.style.display === 'none') return;
     try {
       const scroll = rt.overlay.scrollTop;
       const ev = evaluate();
@@ -2944,13 +2965,18 @@
     commitPriceEdit();
   }
 
+  let resultsTimer = null;
   function renderResultsOnly(kind) {
     if (!rt.overlay) return;
-    const box = rt.overlay.querySelector('[data-role="' + kind + '-results"]');
-    if (!box) return;
-    const d = rt.draft[kind];
-    box.hidden = !d.q;
-    box.innerHTML = kind === 'wish' ? wishResultsHtml() : swapResultsHtml();
+    if (resultsTimer) clearTimeout(resultsTimer);
+    resultsTimer = setTimeout(function () {
+      resultsTimer = null;
+      const box = rt.overlay && rt.overlay.querySelector('[data-role="' + kind + '-results"]');
+      if (!box) return;
+      const d = rt.draft[kind];
+      box.hidden = !d.q;
+      box.innerHTML = kind === 'wish' ? wishResultsHtml() : swapResultsHtml();
+    }, 60);
   }
 
   function resetDraft(kind) {
@@ -3379,15 +3405,17 @@
     }
     placeOwnTab(list, rt.tab);
     if (rt.overlay.style.display !== 'none') {
-      const tabs = list.querySelectorAll('[role="tab"]');
-      for (let i = 0; i < tabs.length; i++) {
-        tabs[i].classList.remove('Mui-selected');
-        tabs[i].setAttribute('aria-selected', 'false');
+      if (!rt.tab.classList.contains('active')) {
+        const tabs = list.querySelectorAll('[role="tab"]');
+        for (let i = 0; i < tabs.length; i++) {
+          tabs[i].classList.remove('Mui-selected');
+          tabs[i].setAttribute('aria-selected', 'false');
+        }
+        rt.tab.classList.add('active');
+        rt.tab.setAttribute('aria-pressed', 'true');
+        applyTabStyle(rt.tab, (rt.tabStyle || FALLBACK_TAB).active);
       }
       if (!rt.fixed) positionOverlay();
-      rt.tab.classList.add('active');
-      rt.tab.setAttribute('aria-pressed', 'true');
-      applyTabStyle(rt.tab, (rt.tabStyle || FALLBACK_TAB).active);
     }
   }
 
@@ -3640,11 +3668,12 @@
     setInterval(ensureUI, 1000);
     setInterval(function () {
       if (!rt.overlay || rt.overlay.style.display === 'none') return;
+      if (document.getElementById('mwi-savings') && document.body.contains(rt.overlay)) return;
       if (!findTablist()) {
         hideOwnTab();
         if (rt.fab) { rt.fab.remove(); rt.fab = null; }
       }
-    }, 200);
+    }, 1000);
     pageWin.addEventListener('resize', function () {
       if (rt.overlay && rt.overlay.style.display !== 'none' && !rt.fixed) positionOverlay();
     });
