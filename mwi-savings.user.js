@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.9
+// @version      0.9.0
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -506,6 +506,277 @@
   function customPriceOf(entry) {
     const n = Number(entry && entry.customPrice);
     return isFinite(n) && n > 0 ? n : null;
+  }
+
+  /* ---------------------------- 分享文案 ---------------------------- */
+
+  // 时间短语：按「遥远档」挑一句，模板里用 {T} 占位
+  // 时间短语：按「遥远档」挑一句，模板里用 {T} 占位
+  // 这些短语会被嵌进句子中段，所以都写成能独立成小句的形式
+  const SHARE_TIME = {
+    near: ['就差最后一哆嗦', '再等一周', '临门一脚了', '马上就好', '一周内见分晓'],
+    month: ['再熬一个月', '下个月见', '这个月能搞定', '一个月的事', '月底前有戏'],
+    long: ['还得熬一阵', '得慢慢来', '日子还长', '几个月的活儿', '按季度算'],
+    far: ['得按年算', '一时半会儿没戏', '遥遥无期', '想都不敢想', '这得靠毅力'],
+    unknown: ['天数不敢算', '算不出来', '提天数伤感情', '随缘', '取决于我的良心']
+  };
+
+  // 总量文案：4 档 × 10 套
+  // 结构统一为「想买什么 → 现在多少进度 → 吐槽」，{T} 只在约 1/3 的模板中使用
+  const SHARE_TOTAL = {
+    start: [
+      '想买 {C} 件心愿，账 {V}，现在攒了 {N}%，剩下的全靠毅力',
+      '心愿单 {V}，进度 {N}%，还差 {G}，才刚摸到起跑线',
+      '想买的那 {C} 件，已攒 {N}%，{G} 的缺口，这个比例相当诚实',
+      '{V} 的心愿单，攒到 {N}%，路还长，但我已经上路了',
+      '想买 {C} 件，进度 {N}%，还差 {G}，{T}，先攒着',
+      '心愿 {V}，目前 {N}%，{G} 的坑还没填，方向是对的',
+      '{C} 件心愿，{V} 的账，现在 {N}%，起步慢不代表不跑',
+      '想买 {C} 件，才攒 {N}%，还差 {G}，这不是穷，是刚开始',
+      '心愿单 {V}，进度 {N}%，剩下的 {G} 我有的是耐心',
+      '{V} 的心愿，攒了 {N}%，{G} 而已，我不慌'
+    ],
+    climb: [
+      '想买 {C} 件心愿，已攒 {N}%，还差 {G}，看得见但摸不着',
+      '心愿单 {V}，进度 {N}%，{G} 的缺口，我的耐心刚好够用',
+      '想买 {C} 件，现在 {N}%，还剩 {G}，不快，但确实在动',
+      '{V} 的心愿单，攒了 {N}%，差 {G}，这波不亏',
+      '想买的那 {C} 件，{N}% 了，还差 {G}，{T}，稳住',
+      '心愿 {V}，已攒 {N}%，{G} 而已，我扛得住',
+      '{C} 件心愿，进度 {N}%，缺口 {G}，我的钱包正在加班',
+      '想买 {C} 件，攒到 {N}%，还差 {G}，这个速度我能接受',
+      '{V} 的心愿单，{N}% 了，剩 {G}，慢慢来也是一种进度',
+      '想买 {C} 件，进度 {N}%，{G} 的缺口，方向对就不怕慢'
+    ],
+    half: [
+      '想买 {C} 件心愿，已攒 {N}%，只差 {G}，这时候最容易手滑',
+      '心愿单 {V}，进度 {N}%，{G} 就能收工，稳住别浪',
+      '想买 {C} 件，已经 {N}%，剩 {G}，胜利在望，钱包在抖',
+      '{V} 的心愿单，攒了 {N}%，还差 {G}，就差最后一哆嗦',
+      '想买的那 {C} 件，{N}% 了，{G} 而已，这次是真的快到了',
+      '心愿 {V}，已攒 {N}%，{G} 就能拿下，我已经闻到味道了',
+      '{C} 件心愿，进度 {N}%，还剩 {G}，别在这时候乱花',
+      '想买 {C} 件，攒到 {N}%，{G} 的缺口，我这心态相当稳',
+      '{V} 的心愿单，{N}% 了，差 {G}，{T}，见分晓',
+      '想买 {C} 件，已经 {N}%，{G} 收尾，不算贪心吧'
+    ],
+    done: [
+      '想买 {C} 件心愿，全部拿下，千百次攒钱只为这一刻',
+      '心愿单 {V}，攒够了，{C} 件一件不剩，钱包也清空了',
+      '想买的那 {C} 件，全到手了，这钱花得踏实',
+      '{V} 的心愿，拿下了，这次不用再算差额',
+      '想买 {C} 件，{N}% 达成，下一步该换个更贵的了',
+      '心愿 {V}，清零，钱包也清零，但值',
+      '{C} 件心愿全部到手，攒钱这事我算是学会了',
+      '想买 {C} 件，已完成，谁还敢说我乱花钱',
+      '{V} 的心愿单，结算完毕，成绩漂亮',
+      '想买的那 {C} 件，全都买了，这波我赢得漂亮'
+    ]
+  };
+
+  // 单件文案：3 状态 × 10 套
+  const SHARE_ITEM = {
+    done: [
+      '想买 {I}，已拿下，这钱花得踏实',
+      '{I} 到手了，攒钱的快乐就这一下',
+      '目标 {I}，已完成，下一个',
+      '{I} 已入袋，不后悔，也不还价',
+      '想买 {I}，买了，谁也别拦我',
+      '{I} 拿下，这是我攒了最久的一件',
+      '{I} 到手，钱包清了，心也安了',
+      '想要 {I}，现在它是我的了',
+      '{I} 已入手，进度条的终点真好看',
+      '想买 {I}，已达成，这波操作没问题'
+    ],
+    progress: [
+      '想买 {I}，已攒 {N}%，还差 {G}，慢慢来',
+      '{I}，进度 {N}%，{G} 的缺口，还在攒',
+      '想要 {I}，现在 {N}%，就差 {G}，差一口气',
+      '想买 {I}，攒到 {N}%，{G} 而已，我扛得住',
+      '{I}，{N}% 了，还差 {G}，{T}',
+      '想要 {I}，进度 {N}%，剩 {G}，方向对就不怕慢',
+      '想买 {I}，已攒 {N}%，{G} 的缺口，正在填',
+      '{I}，{N}% 达成，还差 {G}，稳着来',
+      '想要 {I}，攒了 {N}%，{G} 收尾，不算贪心吧',
+      '想买 {I}，现在 {N}%，就差最后 {G}，别手滑'
+    ],
+    zero: [
+      '想买 {I}，已攒 0%，还差 {G}，刚起步',
+      '{I}，进度 0%，它在等我，我在等钱',
+      '想要 {I}，还差 {G}，目前只够看它一眼',
+      '想买 {I}，一分没攒，{G} 的缺口，先记着',
+      '{I}，0%，{G} 的账，这钱包还没开张',
+      '想要 {I}，进度 0%，{T}，反正我不急',
+      '想买 {I}，还差 {G}，梦想总是要有的',
+      '{I}，0%，{G} 而已，目标是拿来追的',
+      '想要 {I}，一分钱没攒，但它值得',
+      '想买 {I}，进度 0%，{G} 的坑，明天开始填'
+    ]
+  };
+
+  // 记住上一条的整句，避免连续点到同一句（模板下标不同但整句可能相同）
+  const shareRecent = [];
+  // 记住上一次选中的模板 key，避免同一档位连续抽到同一条
+  let lastSharePick = null;
+  function rememberShare(text) {
+    if (!text) return;
+    shareRecent.push(text);
+    if (shareRecent.length > 6) shareRecent.shift();
+  }
+  function shareRecentHas(text) {
+    return shareRecent.indexOf(text) !== -1;
+  }
+
+  function pickShareTemplate(list, tag) {
+    if (!list || !list.length) return '';
+    let idx = Math.floor(Math.random() * list.length);
+    const key = tag + '#' + idx;
+    if (list.length > 1 && key === lastSharePick) {
+      idx = (idx + 1) % list.length;
+    }
+    lastSharePick = tag + '#' + idx;
+    return list[idx];
+  }
+
+  function pickTimePhrase() {
+    const daily = Number(state.settings.dailyProfitM) || 0;
+    if (!(daily > 0)) return pickShareTemplate(SHARE_TIME.unknown, 'tu');
+    const ev = evaluate();
+    const days = ev.days;
+    if (days == null) return pickShareTemplate(SHARE_TIME.unknown, 'tu');
+    if (days <= 7) return pickShareTemplate(SHARE_TIME.near, 'tn');
+    if (days <= 30) return pickShareTemplate(SHARE_TIME.month, 'tm');
+    if (days <= 365) return pickShareTemplate(SHARE_TIME.long, 'tl');
+    return pickShareTemplate(SHARE_TIME.far, 'tf');
+  }
+
+  function fillShare(tpl, vars) {
+    return String(tpl).replace(/\{([A-Z])\}/g, function (m, k) {
+      return vars[k] != null ? String(vars[k]) : m;
+    });
+  }
+
+  function totalShareText(ev) {
+    if (!ev) ev = evaluate();
+    if (!state.wishes.length) return '';
+    const total = ev.totalWishValue || 0;
+    const gap = ev.totalGap || 0;
+    const pctNum = Math.round((ev.overall || 0) * 100);
+    const vars = {
+      V: fmt(total),
+      G: fmt(gap),
+      N: pctNum,
+      C: state.wishes.length,
+      T: pickTimePhrase()
+    };
+    let bucket;
+    if (ev.overall >= 1) bucket = 'done';
+    else if (pctNum < 10) bucket = 'start';
+    else if (pctNum < 50) bucket = 'climb';
+    else bucket = 'half';
+    // 有物品无报价时，缺口不可信：只用不含 {G} 的模板
+    let candidates = SHARE_TOTAL[bucket];
+    if (ev.unpriced > 0) {
+      const safe = candidates.filter(function (t) { return t.indexOf('{G}') === -1; });
+      if (safe.length) candidates = safe;
+    }
+    // 用整句去重：最多尝试 8 次，避免连续两次生成同一句
+    let text = '';
+    for (let i = 0; i < 8; i++) {
+      text = fillShare(pickShareTemplate(candidates, 'total' + bucket), vars);
+      if (!shareRecentHas(text)) break;
+    }
+    rememberShare(text);
+    return text;
+  }
+
+  function itemShareText(row) {
+    if (!row) return '';
+    const name = displayName(row.hrid, row.enh);
+    const vars = {
+      I: name,
+      G: row.gap == null ? '—' : fmt(row.gap),
+      N: Math.round((row.progress || 0) * 100),
+      T: pickTimePhrase()
+    };
+    let bucket;
+    if (row.progress >= 1) bucket = 'done';
+    else if (row.progress > 0) bucket = 'progress';
+    else bucket = 'zero';
+    let pool = SHARE_ITEM[bucket];
+    if (row.gap == null) {
+      const safe = pool.filter(function (t) { return t.indexOf('{G}') === -1; });
+      if (safe.length) pool = safe;
+    }
+    let text = '';
+    for (let i = 0; i < 8; i++) {
+      text = fillShare(pickShareTemplate(pool, 'item' + bucket), vars);
+      if (!shareRecentHas(text)) break;
+    }
+    rememberShare(text);
+    return text;
+  }
+
+  /**
+   * 把文案写入游戏聊天输入框（覆盖，不追加）。
+   * 找不到输入框时静默不做任何处理。
+   * 返回是否写入成功（仅用于内部判断，不向用户提示）。
+   */
+  /**
+   * 找到游戏聊天输入框。
+   * 游戏 DOM：<input type="text" class="ChatPanel_chatInput__xxxx">，
+   * 类名是 CSS Modules（带哈希后缀），所以要用 *= 子串匹配。
+   */
+  function findChatInput() {
+    const sels = [
+      'input[class*="chatInput"]',
+      'textarea[class*="chatInput"]',
+      'input[class*="ChatInput"]',
+      'textarea[class*="ChatInput"]',
+      'input[placeholder*="输入消息"]',
+      'input[placeholder*="Enter message"]',
+      'textarea[placeholder*="输入消息"]',
+      'textarea[placeholder*="Enter message"]'
+    ];
+    for (let i = 0; i < sels.length; i++) {
+      let el = null;
+      try { el = document.querySelector(sels[i]); } catch (e) { el = null; }
+      if (el && !(rt.overlay && rt.overlay.contains(el))) return el;
+    }
+    // 兜底：任何在聊天容器里的文本输入框
+    try {
+      const all = document.querySelectorAll('input[type="text"], input:not([type]), textarea');
+      for (let i = 0; i < all.length; i++) {
+        const el = all[i];
+        if (rt.overlay && rt.overlay.contains(el)) continue;
+        if (el.closest && el.closest('[class*="chat" i]')) return el;
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  /**
+   * 把文案写入游戏聊天输入框（覆盖，不追加）。
+   * 找不到输入框时静默返回 false，不提示不报错。
+   */
+  function insertToChat(text) {
+    if (!text) return false;
+    const input = findChatInput();
+    if (!input) return false;
+    try {
+      const proto = (typeof HTMLTextAreaElement !== 'undefined' && input instanceof HTMLTextAreaElement)
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (setter && setter.set) setter.set.call(input, text);
+      else input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      try { input.setSelectionRange(text.length, text.length); } catch (e) { /* ignore */ }
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   function priceCellHtml(kind, entry, basisValue) {
@@ -2098,6 +2369,7 @@
             '<div class="mwi-left-actions">' +
               '<button class="mwi-btn" data-act="refresh-all"' + ((rt.loadingMarket || rt.inventoryLoading) ? ' disabled' : '') + '>' +
                 ((rt.loadingMarket || rt.inventoryLoading) ? '刷新中…' : '刷新') + '</button>' +
+              '<button class="mwi-btn" data-act="share-total" title="生成一句攒钱吐槽并填入聊天框">分享</button>' +
             '</div>' +
             '<div class="mwi-title">攒钱计划</div>' +
             '<div class="mwi-actions">' +
@@ -2207,7 +2479,9 @@
             '</span>' +
             (i + 1) +
           '</span>' +
-          '<span class="mwi-item" title="' + esc(displayName(r.hrid, r.enh)) + '">' + icon(r.hrid) + '</span>' +
+          '<span class="mwi-item mwi-wish-name" data-act="share-item" data-id="' + esc(r.id) +
+            '" title="' + esc(displayName(r.hrid, r.enh)) + ' · 点击生成吐槽">' +
+            icon(r.hrid) + '</span>' +
           '<span class="num mwi-qty">' + r.qty + '</span>' +
           '<span class="num">' + sell + '</span>' +
           '<span class="num">' + buy + '</span>' +
@@ -2733,7 +3007,8 @@
       return '<div class="mwi-row">' +
         icon(r.hrid) +
         '<div class="mwi-grow">' +
-          '<div class="mwi-name">' + (i + 1) + '. ' + esc(displayName(r.hrid, r.enh)) +
+          '<div class="mwi-name mwi-share-link" data-act="share-item" data-id="' + esc(r.id) +
+            '" title="点击生成吐槽">' + (i + 1) + '. ' + esc(displayName(r.hrid, r.enh)) +
             (r.progress >= 1 ? ' <span class="mwi-ok">已完成</span>' : '') + '</div>' +
           '<div class="mwi-progress"><i style="width:' + (r.progress * 100).toFixed(1) + '%"></i></div>' +
           '<div class="mwi-dim">已攒 ' + pct(r.progress) +
@@ -2868,6 +3143,20 @@
       if (rt.priceEdit) rt.priceEdit = null;
       delete rt.expandedActions[id];
       saveState(); render(); return;
+    }
+    if (act === 'share-total') {
+      // 分享失败不影响其它功能，静默处理
+      try { insertToChat(totalShareText(evaluate())); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (act === 'share-item') {
+      try {
+        const id = el.dataset.id;
+        const ev = evaluate();
+        const row = ev.rows.find(function (x) { return x.id === id; });
+        if (row) insertToChat(itemShareText(row));
+      } catch (e) { /* ignore */ }
+      return;
     }
     if (act === 'refresh-all') {
       if (rt.loadingMarket || rt.inventoryLoading) return;
@@ -3670,6 +3959,10 @@
       .mwi-row > .mwi-btn { flex: 0 0 auto; }
       .mwi-row .mwi-grow { flex: 1 1 auto; min-width: 0; }
       .mwi-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 1px; font-size: 13px; }
+      .mwi-share-link { cursor: pointer; }
+      .mwi-share-link:hover { color: #6ee7e0; text-decoration: underline; }
+      .mwi-wish-name { cursor: pointer; }
+      .mwi-wish-name:hover { filter: brightness(1.35); }
       .mwi-section { margin: 10px 0 2px; font-size: 12px; color: #8f9ab3; }
       .mwi-dim { color: #8f9ab3; font-size: 11px; line-height: 1.45; }
       .mwi-warn { color: #f0a0a0; margin: 6px 0 10px; line-height: 1.6; }
