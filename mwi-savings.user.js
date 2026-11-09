@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.8.8
+// @version      0.8.9
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
 // @homepage     https://github.com/im630/mwi-savings
-// @downloadURL  https://www.tampermonkey.net/script_installation.php#url=https://js.nainai.eu.org/proxy/https://update.greasyfork.org/scripts/602635/%E9%93%B6%E6%B2%B3%E5%A5%B6%E7%89%9B%20%C2%B7%20%E6%94%92%E9%92%B1%E8%AE%A1%E5%88%92.user.js
-// @updateURL    https://www.tampermonkey.net/script_installation.php#url=https://js.nainai.eu.org/proxy/https://update.greasyfork.org/scripts/602635/%E9%93%B6%E6%B2%B3%E5%A5%B6%E7%89%9B%20%C2%B7%20%E6%94%92%E9%92%B1%E8%AE%A1%E5%88%92.user.js
 // @match        https://www.milkywayidle.com/*
 // @match        https://test.milkywayidle.com/*
 // @match        https://www.milkywayidlecn.com/*
@@ -22,6 +20,8 @@
 // @connect      fastly.jsdelivr.net
 // @connect      gcore.jsdelivr.net
 // @noframes
+// @downloadURL https://js.nainai.eu.org/proxy/update/https://update.greasyfork.org/scripts/602635/%E9%93%B6%E6%B2%B3%E5%A5%B6%E7%89%9B%20%C2%B7%20%E6%94%92%E9%92%B1%E8%AE%A1%E5%88%92.user.js
+// @updateURL https://js.nainai.eu.org/proxy/update/https://update.greasyfork.org/scripts/602635/%E9%93%B6%E6%B2%B3%E5%A5%B6%E7%89%9B%20%C2%B7%20%E6%94%92%E9%92%B1%E8%AE%A1%E5%88%92.meta.js
 // ==/UserScript==
 
 (function () {
@@ -427,7 +427,9 @@
     nameCache: Object.create(null),
     invIndex: null,
     inventoryWs: null,
-    listingsWs: null,
+    loadedOnce: false,
+    inventoryStale: false,
+    inventoryStaleAt: 0,
     expandedActions: {},
     actionDraft: {
       tab: 'life',
@@ -1301,6 +1303,10 @@
           if (enh == null) enh = Number(parts[3]);
         }
         if (!hrid || hrid.indexOf('/items/') !== 0) continue;
+        // 方案A：市场挂单只由 myMarketListingMap 提供，避免同一物品在
+        // characterItemMap（market 位置）与 myMarketListingMap 两处各统计一次。
+        if (loc && String(loc).indexOf('/item_locations/market') === 0) continue;
+        if (loc === MARKET_LOC) continue;
         const q = Number(v.count != null ? v.count : v.quantity);
         if (!isFinite(q) || q <= 0) continue;
         const copy = Object.assign({}, v);
@@ -1321,10 +1327,12 @@
       if (!obj || typeof obj !== 'object' || depth < 0 || seenObjs.has(obj)) return;
       seenObjs.add(obj);
       if (isItemStack(obj)) {
+        // 方案A：market 位置的条目一律跳过（只由 myMarketListingMap 提供）
+        const rawLoc = obj.itemLocationHrid || obj.locationHrid || obj.itemLocation || obj.location;
+        if (rawLoc && String(rawLoc).indexOf('/item_locations/market') === 0) return;
         pushStateItem(out, seen, obj, key);
         return;
-      }
-      if (Array.isArray(obj)) {
+      }      if (Array.isArray(obj)) {
         for (let i = 0; i < obj.length; i++) collectNested(obj[i], key, depth - 1);
         return;
       }
@@ -1353,6 +1361,8 @@
       if (/myMarketListing/i.test(key)) continue;
       const raw = st[key];
       if (!raw || typeof raw !== 'object') continue;
+      // 顶层已经处理过的对象登记进 seenObjs，避免 collectNested 递归时重复统计
+      seenObjs.add(raw);
       if (typeof raw.forEach === 'function' && typeof raw.entries === 'function') {
         pushFromMap(raw, key);
         continue;
@@ -1361,35 +1371,18 @@
       if (Array.isArray(raw) || typeof raw.values === 'function') arr = asArray(raw);
       else arr = Object.values(raw);
       if (arr) {
-        for (let j = 0; j < arr.length; j++) pushStateItem(out, seen, arr[j], key);
+        for (let j = 0; j < arr.length; j++) {
+          const v = arr[j];
+          if (v && typeof v === 'object') seenObjs.add(v);
+          pushStateItem(out, seen, v, key);
+        }
       }
     }
     collectNested(st, '', 3);
-    // 市场挂单：state.myMarketListingMap（Map）与 WS 快照合并，保证任一路径可用
-    let listings = readMyMarketListings(st);
-    const wsListings = rt.listingsWs || [];
-    if (wsListings.length) {
-      const has = {};
-      for (let i = 0; i < listings.length; i++) {
-        has[listings[i].itemHrid + '|' + listings[i].enhancementLevel] = true;
-      }
-      for (let i = 0; i < wsListings.length; i++) {
-        const w = wsListings[i];
-        if (!w || !w.itemHrid) continue;
-        const k = w.itemHrid + '|' + (Number(w.enhancementLevel) || 0);
-        if (has[k]) continue;
-        const qty = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
-        if (!(qty > 0)) continue;
-        has[k] = true;
-        listings.push({
-          id: w.id || k,
-          itemHrid: w.itemHrid,
-          count: qty,
-          enhancementLevel: Number(w.enhancementLevel) || 0,
-          itemLocationHrid: MARKET_LOC
-        });
-      }
-    }
+    // 方案A：市场挂单以 state.myMarketListingMap 为唯一权威来源。
+    // 不再用 rt.listingsWs 往回补——旧挂单已被成交/下架却会被重新补回，
+    // 导致「买到了仍按原挂单数量统计」。
+    const listings = readMyMarketListings(st);
     for (let i = 0; i < listings.length; i++) {
       const l = listings[i];
       if (!l || !l.itemHrid) continue;
@@ -1431,6 +1424,10 @@
     return true;
   }
 
+  /**
+   * 方案A：库存 + 挂单必须来自同一次 state 读取，保证两者是同一时刻的快照。
+   * 读不到就返回 null，由调用方保留上一次数据并标记过期，绝不用旧快照拼新挂单。
+   */
   function readLiveItems() {
     const states = [
       pageWin.mwi && pageWin.mwi.game && pageWin.mwi.game.state,
@@ -1443,56 +1440,14 @@
       if (!st) continue;
       const items = readStateItems(st);
       if (!items.length) continue;
-      // 选包含市场挂单最多的结果；否则优先第一个有内容的
+      // 选包含市场挂单最多的结果；同等条件下取第一个（state 列表已按可信度排序）
       const marketCount = items.filter(function (x) {
         return (x.itemLocationHrid || '').indexOf('/item_locations/market') === 0;
       }).length;
       if (!best || marketCount > best.marketCount) best = { items: items, marketCount: marketCount };
       if (marketCount > 0) break;
     }
-    if (best && best.items.length) return best.items;
-    if (rt.inventoryWs && rt.inventoryWs.length) {
-      const copy = rt.inventoryWs.slice();
-      const wsList = rt.listingsWs || [];
-      for (let i = 0; i < wsList.length; i++) {
-        const w = wsList[i];
-        if (!w || !w.itemHrid) continue;
-        const qty = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
-        if (!(qty > 0)) continue;
-        copy.push({
-          itemHrid: w.itemHrid,
-          count: qty,
-          enhancementLevel: Number(w.enhancementLevel) || 0,
-          itemLocationHrid: MARKET_LOC
-        });
-      }
-      return copy;
-    }
-    const wsList = rt.listingsWs || [];
-    if (wsList.length) {
-      const copy = [];
-      for (let i = 0; i < wsList.length; i++) {
-        const w = wsList[i];
-        if (!w || !w.itemHrid) continue;
-        const qty = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
-        if (!(qty > 0)) continue;
-        copy.push({
-          itemHrid: w.itemHrid,
-          count: qty,
-          enhancementLevel: Number(w.enhancementLevel) || 0,
-          itemLocationHrid: MARKET_LOC
-        });
-      }
-      if (copy.length) return copy;
-    }
-    return null;
-  }
-
-  function applyWsListingsFallback(st) {
-    if (!st || !rt.listingsWs || !rt.listingsWs.length) return;
-    const has = readMyMarketListings(st);
-    if (has && has.length) return;
-    st.myMarketListingMap = rt.listingsWs;
+    return best && best.items.length ? best.items : null;
   }
 
   function findGoldDeep(root) {
@@ -1726,29 +1681,27 @@
     setTimeout(function () {
       try {
         const live = readLiveItems();
-        const items = live || rt.inventoryRaw;
+        // 方案A：读不到实时库存时保持上一次数据并标记过期，
+        // 绝不用旧快照覆盖（否则旧库存 + 新挂单会被重复计算）。
+        if (!live || !live.length) {
+          rt.inventoryStale = true;
+          rt.inventoryStaleAt = Date.now();
+          if (!silent) showNotice('未读取到实时库存，已保留上次数据（可能过期）');
+          return;
+        }
+        rt.inventoryStale = false;
+        rt.inventoryStaleAt = 0;
+        setInventory(live);
+
         const candidates = readLiveGoldCandidates();
-        const itemCoin = sumCoin(items);
+        const itemCoin = sumCoin(live);
         if (itemCoin != null) addGoldCandidate(candidates, itemCoin, '当前库存快照', 1);
         const oldGold = rt.gold || 0;
         const picked = chooseLiveGold(candidates, oldGold);
         const goldChanged = !!(picked && picked.value !== oldGold);
-        const hasCoin = itemCoin != null;
-        if (items && items.length) {
-          setInventory(items);
-          if (picked) {
-            rt.gold = picked.value;
-          } else if (!hasCoin) {
-            rt.gold = oldGold;
-          }
-          const goldNote = picked ? (goldChanged ? '，金币已更新' : '') : (!hasCoin ? '，金币未读取到，保留原值' : '');
-          if (!silent) showNotice((live ? '库存已刷新（实时）' : '库存已刷新（最近一次同步；若未变化请刷新页面）') + goldNote);
-        } else if (picked) {
-          rt.gold = picked.value;
-          if (!silent) showNotice('金币已刷新（实时），但未读取到库存');
-        } else {
-          if (!silent) showNotice('未读取到库存，请刷新页面后重试');
-        }
+        if (picked) rt.gold = picked.value;
+        const goldNote = picked ? (goldChanged ? '，金币已更新' : '') : '，金币未读取到，保留原值';
+        if (!silent) showNotice('库存已刷新（实时）' + goldNote);
       } catch (e) {
         if (!silent) showNotice('刷新库存失败：' + (e && e.message ? e.message : e));
       } finally {
@@ -1825,7 +1778,7 @@
   }
 
   function setInventory(items) {
-    rt.inventoryRaw = items;
+    // 方案A：不再保留 inventoryRaw 作为可回退快照，避免旧库存被当成实时数据
     let cid = null;
     for (let i = 0; i < (items || []).length; i++) {
       if (items[i] && items[i].characterID != null) { cid = items[i].characterID; break; }
@@ -1850,6 +1803,7 @@
     }
     rt.inventory = list;
     rt.invIndex = null;
+    rt.loadedOnce = true;
     let gold = 0;
     for (let i = 0; i < list.length; i++) {
       if (list[i].hrid === '/items/coin' && list[i].loc === INV_LOC) gold += list[i].qty;
@@ -3848,44 +3802,19 @@
         else merged.push(s);
       }
       rt.inventoryWs = merged;
-      if (!rt.inventory.length) applyInventorySnapshot(merged);
+      // 仅作首次启动引导：正常刷新路径只用 state 实时数据
+      if (!rt.inventory.length && !rt.loadedOnce) applyInventorySnapshot(merged);
     }
-    // 市场挂单：init_character_data 里是 myMarketListings 数组，后续更新是 endMarketListings
+    // 方案A：市场挂单不再维护 WS 快照。挂单的唯一权威来源是 state.myMarketListingMap，
+    // 用旧快照回补会把已成交/已下架的挂单重新算进去。
     const listingSnap = Array.isArray(obj.myMarketListings) ? obj.myMarketListings
       : (Array.isArray(obj.endMarketListings) ? obj.endMarketListings : null);
-    if (listingSnap && listingSnap.length) {
-      const base = rt.listingsWs || [];
-      const byId = Object.create(null);
-      const merged = [];
-      function keyOf(x) {
-        return x.id || x.hash || (x.itemHrid + '|' + x.enhancementLevel + '|' + x.price);
-      }
-      for (let i = 0; i < base.length; i++) {
-        const x = base[i];
-        if (!x || !x.itemHrid) continue;
-        const k = keyOf(x);
-        if (byId[k] === undefined) { byId[k] = merged.length; merged.push(x); }
-      }
-      for (let i = 0; i < listingSnap.length; i++) {
-        const x = listingSnap[i];
-        if (!x || !x.itemHrid) continue;
-        const k = keyOf(x);
-        const idx = byId[k];
-        if (!(Number(x.orderQuantity) - Number(x.filledQuantity || 0) > 0)) {
-          if (idx !== undefined) { merged.splice(idx, 1); byId[k] = undefined; }
-          continue;
-        }
-        if (idx !== undefined && merged[idx]) merged[idx] = x;
-        else { byId[k] = merged.length; merged.push(x); }
-      }
-      rt.listingsWs = merged;
-      if (!rt.inventory.length) applyInventorySnapshot(merged);
-    }
     if (obj.type === 'init_character_data' && rt.characterID != null) {
       onCharacterSwitch();
     }
     if (obj.type === 'init_character_data' ||
         obj.type === 'market_listings_updated' ||
+        obj.type === 'items_updated' ||
         obj.myMarketListingMap ||
         obj.myMarketListings ||
         listingSnap ||
@@ -3956,13 +3885,33 @@
       ['game', pageWin.game && pageWin.game.state],
       ['__game', pageWin.__game && pageWin.__game.state]
     ];
-    const result = { states: [], listingsWs: (rt.listingsWs || []).length, inventoryWs: (rt.inventoryWs || []).length };
+    const result = {
+      inventoryWs: (rt.inventoryWs || []).length,
+      inventoryStale: !!rt.inventoryStale,
+      inventoryStaleAt: rt.inventoryStaleAt || 0,
+      states: []
+    };
     for (let i = 0; i < states.length; i++) {
       const name = states[i][0];
       const st = states[i][1];
       if (!st) { result.states.push({ name: name, exists: false }); continue; }
       const raw = st.myMarketListingMap;
       const listings = readMyMarketListings(st);
+      const items = readStateItems(st);
+      // 检查同一物品是否同时出现在库存与挂单两处（方案 A 之后应只在挂单里）
+      const dup = {};
+      const inMarket = {};
+      for (let j = 0; j < items.length; j++) {
+        const it = items[j];
+        const key = (it.itemHrid || '') + '|' + (it.enhancementLevel || 0);
+        if ((it.itemLocationHrid || '').indexOf('/item_locations/market') === 0) inMarket[key] = true;
+      }
+      for (let j = 0; j < items.length; j++) {
+        const it = items[j];
+        const key = (it.itemHrid || '') + '|' + (it.enhancementLevel || 0);
+        const isMarket = (it.itemLocationHrid || '').indexOf('/item_locations/market') === 0;
+        if (!isMarket && inMarket[key]) dup[key] = true;
+      }
       result.states.push({
         name: name,
         exists: true,
@@ -3971,12 +3920,17 @@
         mapSize: raw && typeof raw.size === 'number' ? raw.size : (raw ? Object.keys(raw).length : 0),
         parsedListings: listings.length,
         parsedQty: listings.reduce(function (n, x) { return n + x.count; }, 0),
-        inventoryItems: readStateItems(st).length
+        inventoryItems: items.length,
+        marketItems: items.filter(function (x) {
+          return (x.itemLocationHrid || '').indexOf('/item_locations/market') === 0;
+        }).length,
+        duplicateInInventoryAndMarket: Object.keys(dup)
       });
     }
     const inv = rt.inventory || [];
     result.inventory = {
       total: inv.length,
+      inv: inv.filter(function (x) { return x.loc === INV_LOC; }).length,
       market: inv.filter(function (x) { return (x.loc || '').indexOf('/item_locations/market') === 0; }).length,
       marketQty: inv.filter(function (x) { return (x.loc || '').indexOf('/item_locations/market') === 0; })
         .reduce(function (n, x) { return n + x.qty; }, 0)
