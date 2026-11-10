@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.9.0
+// @version      0.9.2
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -427,6 +427,8 @@
     nameCache: Object.create(null),
     invIndex: null,
     inventoryWs: null,
+    listingsWs: null,
+    inventorySource: '',
     loadedOnce: false,
     inventoryStale: false,
     inventoryStaleAt: 0,
@@ -1576,8 +1578,8 @@
         if (!hrid || hrid.indexOf('/items/') !== 0) continue;
         // 方案A：市场挂单只由 myMarketListingMap 提供，避免同一物品在
         // characterItemMap（market 位置）与 myMarketListingMap 两处各统计一次。
-        if (loc && String(loc).indexOf('/item_locations/market') === 0) continue;
-        if (loc === MARKET_LOC) continue;
+        // 注意：只在位置确实来自 key 或字段时跳过，不能误伤正常库存。
+        if (parts.length >= 4 && String(parts[1] || '').indexOf('/item_locations/market') === 0) continue;
         const q = Number(v.count != null ? v.count : v.quantity);
         if (!isFinite(q) || q <= 0) continue;
         const copy = Object.assign({}, v);
@@ -1598,12 +1600,14 @@
       if (!obj || typeof obj !== 'object' || depth < 0 || seenObjs.has(obj)) return;
       seenObjs.add(obj);
       if (isItemStack(obj)) {
-        // 方案A：market 位置的条目一律跳过（只由 myMarketListingMap 提供）
+        // 方案A：market 位置的条目由 myMarketListingMap 统一提供，这里跳过。
+        // 只按对象自身的明确位置字段判断，不影响没有位置字段的库存条目。
         const rawLoc = obj.itemLocationHrid || obj.locationHrid || obj.itemLocation || obj.location;
         if (rawLoc && String(rawLoc).indexOf('/item_locations/market') === 0) return;
         pushStateItem(out, seen, obj, key);
         return;
-      }      if (Array.isArray(obj)) {
+      }
+      if (Array.isArray(obj)) {
         for (let i = 0; i < obj.length; i++) collectNested(obj[i], key, depth - 1);
         return;
       }
@@ -1632,15 +1636,16 @@
       if (/myMarketListing/i.test(key)) continue;
       const raw = st[key];
       if (!raw || typeof raw !== 'object') continue;
-      // 顶层已经处理过的对象登记进 seenObjs，避免 collectNested 递归时重复统计
-      seenObjs.add(raw);
       if (typeof raw.forEach === 'function' && typeof raw.entries === 'function') {
         pushFromMap(raw, key);
+        // Map 已被完整展开，登记以跳过递归重复；数组/普通对象不登记，
+        // 让 collectNested 仍能深入（state 结构可能比顶层更深）。
+        seenObjs.add(raw);
         continue;
       }
       let arr = null;
       if (Array.isArray(raw) || typeof raw.values === 'function') arr = asArray(raw);
-      else arr = Object.values(raw);
+      else arr = null;   // 普通对象交给 collectNested 递归
       if (arr) {
         for (let j = 0; j < arr.length; j++) {
           const v = arr[j];
@@ -1649,7 +1654,7 @@
         }
       }
     }
-    collectNested(st, '', 3);
+    collectNested(st, '', 5);
     // 方案A：市场挂单以 state.myMarketListingMap 为唯一权威来源。
     // 不再用 rt.listingsWs 往回补——旧挂单已被成交/下架却会被重新补回，
     // 导致「买到了仍按原挂单数量统计」。
@@ -1696,8 +1701,10 @@
   }
 
   /**
-   * 方案A：库存 + 挂单必须来自同一次 state 读取，保证两者是同一时刻的快照。
-   * 读不到就返回 null，由调用方保留上一次数据并标记过期，绝不用旧快照拼新挂单。
+   * 读取实时库存与挂单。
+   * 优先读游戏 state；若游戏未把 state 暴露到全局（只装本插件时常见），
+   * 回退到 WebSocket 快照 rt.inventoryWs / rt.listingsWs。
+   * 注意：回退数据来自 WS 增量消息流，本身是实时的，不是「旧快照」。
    */
   function readLiveItems() {
     const states = [
@@ -1718,7 +1725,50 @@
       if (!best || marketCount > best.marketCount) best = { items: items, marketCount: marketCount };
       if (marketCount > 0) break;
     }
-    return best && best.items.length ? best.items : null;
+    if (best && best.items.length) {
+      rt.inventorySource = 'state';
+      return best.items;
+    }
+    // 回退：WS 快照（库存 + 挂单）
+    return wsItemsFallback();
+  }
+
+  // 把 rt.inventoryWs / rt.listingsWs 组装成统一的物品列表
+  function wsItemsFallback() {
+    const inv = rt.inventoryWs || [];
+    const lst = rt.listingsWs || [];
+    if (!inv.length && !lst.length) return null;
+    const out = [];
+    for (let i = 0; i < inv.length; i++) {
+      const s = inv[i];
+      if (!s || !s.itemHrid) continue;
+      const q = Number(s.count != null ? s.count : s.quantity);
+      if (!(q > 0)) continue;
+      // 挂单位置的库存条目跳过，统一由 lst 提供，避免重复
+      const loc = itemLoc(s);
+      if (String(loc).indexOf('/item_locations/market') === 0) continue;
+      out.push({
+        itemHrid: s.itemHrid,
+        count: q,
+        enhancementLevel: Number(s.enhancementLevel || 0) || 0,
+        itemLocationHrid: loc
+      });
+    }
+    for (let i = 0; i < lst.length; i++) {
+      const w = lst[i];
+      if (!w || !w.itemHrid) continue;
+      const q = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
+      if (!(q > 0)) continue;
+      out.push({
+        itemHrid: w.itemHrid,
+        count: q,
+        enhancementLevel: Number(w.enhancementLevel || 0) || 0,
+        itemLocationHrid: MARKET_LOC
+      });
+    }
+    if (!out.length) return null;
+    rt.inventorySource = 'ws';
+    return out;
   }
 
   function findGoldDeep(root) {
@@ -4095,13 +4145,42 @@
         else merged.push(s);
       }
       rt.inventoryWs = merged;
-      // 仅作首次启动引导：正常刷新路径只用 state 实时数据
-      if (!rt.inventory.length && !rt.loadedOnce) applyInventorySnapshot(merged);
+      // WS 快照就是实时数据源；游戏未暴露 state 时靠它供给库存。
+      if (!rt.inventory.length) applyInventorySnapshot(merged);
     }
-    // 方案A：市场挂单不再维护 WS 快照。挂单的唯一权威来源是 state.myMarketListingMap，
-    // 用旧快照回补会把已成交/已下架的挂单重新算进去。
+    // 市场挂单：与库存一样维护 WS 快照，供 state 不可用时回退使用。
+    // 已成交/下架的挂单会从 map 移除（orderQuantity-filled ≤ 0），不会残留。
     const listingSnap = Array.isArray(obj.myMarketListings) ? obj.myMarketListings
       : (Array.isArray(obj.endMarketListings) ? obj.endMarketListings : null);
+    if (listingSnap && listingSnap.length) {
+      const byId = Object.create(null);
+      const merged = [];
+      const base = rt.listingsWs || [];
+      function keyOf(x) {
+        return x.id || x.hash || (x.itemHrid + '|' + (x.enhancementLevel || 0) + '|' + (x.price || 0));
+      }
+      for (let i = 0; i < base.length; i++) {
+        const x = base[i];
+        if (!x || !x.itemHrid) continue;
+        const k = keyOf(x);
+        if (byId[k] === undefined) { byId[k] = merged.length; merged.push(x); }
+      }
+      for (let i = 0; i < listingSnap.length; i++) {
+        const x = listingSnap[i];
+        if (!x || !x.itemHrid) continue;
+        const k = keyOf(x);
+        const idx = byId[k];
+        const remain = Number(x.orderQuantity) - Number(x.filledQuantity || 0);
+        if (!(remain > 0)) {
+          // 已成交/取消：从快照移除
+          if (idx !== undefined && merged[idx]) { merged.splice(idx, 1); byId[k] = undefined; }
+          continue;
+        }
+        if (idx !== undefined && merged[idx]) merged[idx] = x;
+        else { byId[k] = merged.length; merged.push(x); }
+      }
+      rt.listingsWs = merged;
+    }
     if (obj.type === 'init_character_data' && rt.characterID != null) {
       onCharacterSwitch();
     }
