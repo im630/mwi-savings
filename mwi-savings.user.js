@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.9.2
+// @version      0.9.6
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -1757,13 +1757,18 @@
     for (let i = 0; i < lst.length; i++) {
       const w = lst[i];
       if (!w || !w.itemHrid) continue;
+      // 只有卖单（isSell !== false）才代表「我拥有的物品在市场上待售」；
+      // 收购单（isSell === false）是我在花钱买东西，不算资产。
+      if (w.isSell === false) continue;
+      if (!isListingActive(w)) continue;
       const q = Number(w.orderQuantity) - Number(w.filledQuantity || 0);
       if (!(q > 0)) continue;
       out.push({
         itemHrid: w.itemHrid,
         count: q,
         enhancementLevel: Number(w.enhancementLevel || 0) || 0,
-        itemLocationHrid: MARKET_LOC
+        itemLocationHrid: MARKET_LOC,
+        listingId: w.id
       });
     }
     if (!out.length) return null;
@@ -2014,14 +2019,25 @@
         rt.inventoryStaleAt = 0;
         setInventory(live);
 
-        const candidates = readLiveGoldCandidates();
-        const itemCoin = sumCoin(live);
-        if (itemCoin != null) addGoldCandidate(candidates, itemCoin, '当前库存快照', 1);
-        const oldGold = rt.gold || 0;
-        const picked = chooseLiveGold(candidates, oldGold);
-        const goldChanged = !!(picked && picked.value !== oldGold);
-        if (picked) rt.gold = picked.value;
-        const goldNote = picked ? (goldChanged ? '，金币已更新' : '') : '，金币未读取到，保留原值';
+        // 金币优先取库存里的 /items/coin 条目（与 mwitools 一致），
+        // 读不到时才退回多源探测。
+        const coinFromItems = goldFromItems(live);
+        let goldNote = '';
+        if (coinFromItems != null) {
+          const oldGold = rt.gold || 0;
+          setGold(coinFromItems, '/items/coin 库存条目');
+          goldNote = coinFromItems !== oldGold ? '，金币已更新' : '';
+        } else {
+          const candidates = readLiveGoldCandidates();
+          const oldGold = rt.gold || 0;
+          const picked = chooseLiveGold(candidates, oldGold);
+          if (picked) {
+            setGold(picked.value, '兜底探测');
+            goldNote = picked.value !== oldGold ? '，金币已更新' : '';
+          } else {
+            goldNote = '，金币未读取到，保留原值';
+          }
+        }
         if (!silent) showNotice('库存已刷新（实时）' + goldNote);
       } catch (e) {
         if (!silent) showNotice('刷新库存失败：' + (e && e.message ? e.message : e));
@@ -2125,14 +2141,24 @@
     rt.inventory = list;
     rt.invIndex = null;
     rt.loadedOnce = true;
-    let gold = 0;
-    for (let i = 0; i < list.length; i++) {
-      if (list[i].hrid === '/items/coin' && list[i].loc === INV_LOC) gold += list[i].qty;
-    }
-    rt.gold = gold;
+    // 金币不在这里写：由 refreshInventory() 通过 goldFromItems()/setGold() 统一决策，
+    // 避免多处写 rt.gold 互相覆盖。
     rt.inventoryAt = Date.now();
     syncAllSwaps();
     scheduleRender();
+  }
+
+  /**
+   * 写入金币。唯一的 rt.gold 写入点，便于追踪来源。
+   * 返回是否发生变化。
+   */
+  function setGold(value, source) {
+    const n = Number(value);
+    if (!isFinite(n) || n < 0) return false;
+    const changed = rt.gold !== n;
+    rt.gold = n;
+    rt.goldSource = source || '';
+    return changed;
   }
 
   function invIndex() {
@@ -4109,6 +4135,126 @@
     });
   }
 
+  /* ---------------------------- WS 数据合并 ---------------------------- */
+
+  // 物品唯一键：优先 id，退回 hash，最后退回三元组（兼容老版本不��� id 的情况）
+  function itemKeyOf(it) {
+    if (!it) return '';
+    if (it.id != null) return 'id:' + it.id;
+    if (it.hash) return 'hash:' + it.hash;
+    return 'k:' + (it.itemHrid || '') + '|' + (it.itemLocationHrid || '') + '|' + (it.enhancementLevel || 0);
+  }
+
+  /**
+   * 合并物品增量。实测 WS 字段含 id / hash，所以用 id 精确匹配，
+   * count === 0 时直接删除，与 mwitools 的做法一致。
+   */
+  function mergeItemList(updates) {
+    if (!Array.isArray(updates) || !updates.length) return;
+    if (!rt.inventoryWs) rt.inventoryWs = [];
+    const list = rt.inventoryWs;
+    const index = Object.create(null);
+    for (let i = 0; i < list.length; i++) index[itemKeyOf(list[i])] = i;
+
+    let changed = false;
+    for (let i = 0; i < updates.length; i++) {
+      const it = updates[i];
+      if (!it || !it.itemHrid) continue;
+      const k = itemKeyOf(it);
+      const idx = index[k];
+      const count = Number(it.count || 0);
+      if (count <= 0) {
+        if (idx !== undefined && list[idx]) {
+          list.splice(idx, 1);
+          delete index[k];
+          // 删除后后续下标全部失效，重建索引
+          for (const key in index) if (index[key] > idx) index[key]--;
+          changed = true;
+        }
+        continue;
+      }
+      if (idx !== undefined && list[idx]) {
+        list[idx] = it;
+      } else {
+        index[k] = list.length;
+        list.push(it);
+      }
+      changed = true;
+    }
+    if (changed) rt.inventoryAt = Date.now();
+  }
+
+  // 挂单状态判定：实测 status 是字符串 '/market_listing_status/active'
+  function isListingActive(l) {
+    if (!l) return false;
+    const s = String(l.status || '').toLowerCase();
+    if (s) return s.indexOf('active') !== -1;
+    // 没有 status 时退回数量判断
+    return (Number(l.orderQuantity) - Number(l.filledQuantity || 0)) > 0;
+  }
+
+  /**
+   * 合并挂单增量。实测字段含 id / status / orderQuantity / filledQuantity。
+   * 非 active 的挂单直接移除。
+   *
+   * 刻意忽略的字段（需求已确认）：
+   *  - coinsAvailable：收购单冻结的资金，不属于可用金币
+   *  - unclaimedCoinCount / unclaimedItemCount：已成交待领取，本项目不计入
+   */
+  function mergeListingList(updates) {
+    if (!Array.isArray(updates) || !updates.length) return;
+    if (!rt.listingsWs) rt.listingsWs = [];
+    const list = rt.listingsWs;
+    const index = Object.create(null);
+    for (let i = 0; i < list.length; i++) index[String(list[i] && list[i].id)] = i;
+
+    let changed = false;
+    for (let i = 0; i < updates.length; i++) {
+      const l = updates[i];
+      if (!l || !l.itemHrid) continue;
+      const k = String(l.id);
+      const idx = index[k];
+      if (!isListingActive(l)) {
+        if (idx !== undefined && list[idx]) {
+          list.splice(idx, 1);
+          delete index[k];
+          for (const key in index) if (index[key] > idx) index[key]--;
+          changed = true;
+        }
+        continue;
+      }
+      if (idx !== undefined && list[idx]) list[idx] = l;
+      else { index[k] = list.length; list.push(l); }
+      changed = true;
+    }
+    if (changed) rt.inventoryAt = Date.now();
+  }
+
+  /**
+   * 从库存 Coin 条目取金币。
+   * 实测：金币就是 /item_locations/inventory 下 /items/coin 的 count，
+   * 不需要探测 character.coins 等字段。
+   */
+  function goldFromItems(items) {
+    let sum = 0;
+    let found = false;
+    for (let i = 0; i < (items || []).length; i++) {
+      const it = items[i];
+      if (!it) continue;
+      const hrid = it.itemHrid || it.hrid;
+      if (hrid !== '/items/coin') continue;
+      const loc = it.itemLocationHrid || it.locationHrid || it.itemLocation || it.location || INV_LOC;
+      if (String(loc).indexOf('/item_locations/inventory') !== 0) continue;
+      const q = Number(it.count != null ? it.count : it.quantity);
+      if (!isFinite(q)) continue;
+      sum += q;
+      found = true;
+    }
+    return found ? sum : null;
+  }
+
+  /* ---------------------------- 诊断 ---------------------------- */
+
   function onWs(obj) {
     if (!obj || typeof obj !== 'object') return;
     if (obj.itemDetailMap) {
@@ -4118,68 +4264,20 @@
       scheduleRender();
     }
     // 角色初始化/物品更新消息里自带完整库存快照，直接落盘，避免依赖游戏 state 结构。
+    // 实测字段：{ id, characterID, itemLocationHrid, itemHrid, enhancementLevel, count, offlineCount, hash }
     const snapshot = Array.isArray(obj.characterItems) ? obj.characterItems
-      : (Array.isArray(obj.endCharacterItems) ? obj.endCharacterItems : null);    if (snapshot && snapshot.length) {
-      const merged = [];
-      const seenHash = {};
-      const base = rt.inventoryWs || [];
-      for (let i = 0; i < base.length; i++) {
-        const s = base[i];
-        if (!s) continue;
-        const k = s.hash || (s.itemHrid + '|' + s.itemLocationHrid + '|' + s.enhancementLevel);
-        seenHash[k] = true;
-        merged.push(s);
-      }
-      for (let i = 0; i < snapshot.length; i++) {
-        const s = snapshot[i];
-        if (!s || !s.itemHrid) continue;
-        const k = s.hash || (s.itemHrid + '|' + s.itemLocationHrid + '|' + s.enhancementLevel);
-        const idx = merged.findIndex(function (x) {
-          return (x.hash || (x.itemHrid + '|' + x.itemLocationHrid + '|' + x.enhancementLevel)) === k;
-        });
-        if (Number(s.count) === 0) {
-          if (idx !== -1) merged.splice(idx, 1);
-          continue;
-        }
-        if (idx !== -1) merged[idx] = s;
-        else merged.push(s);
-      }
-      rt.inventoryWs = merged;
-      // WS 快照就是实时数据源；游戏未暴露 state 时靠它供给库存。
-      if (!rt.inventory.length) applyInventorySnapshot(merged);
+      : (Array.isArray(obj.endCharacterItems) ? obj.endCharacterItems : null);
+    if (snapshot && snapshot.length) {
+      mergeItemList(snapshot);
+      if (!rt.inventory.length) applyInventorySnapshot(rt.inventoryWs);
     }
-    // 市场挂单：与库存一样维护 WS 快照，供 state 不可用时回退使用。
-    // 已成交/下架的挂单会从 map 移除（orderQuantity-filled ≤ 0），不会残留。
+    // 市场挂单。实测字段：{ id, status:'/market_listing_status/active', isSell,
+    // orderQuantity, filledQuantity, price }
+    // coinsAvailable（冻结资金）与 unclaimed*（待领取）按需求刻意不计入。
     const listingSnap = Array.isArray(obj.myMarketListings) ? obj.myMarketListings
       : (Array.isArray(obj.endMarketListings) ? obj.endMarketListings : null);
     if (listingSnap && listingSnap.length) {
-      const byId = Object.create(null);
-      const merged = [];
-      const base = rt.listingsWs || [];
-      function keyOf(x) {
-        return x.id || x.hash || (x.itemHrid + '|' + (x.enhancementLevel || 0) + '|' + (x.price || 0));
-      }
-      for (let i = 0; i < base.length; i++) {
-        const x = base[i];
-        if (!x || !x.itemHrid) continue;
-        const k = keyOf(x);
-        if (byId[k] === undefined) { byId[k] = merged.length; merged.push(x); }
-      }
-      for (let i = 0; i < listingSnap.length; i++) {
-        const x = listingSnap[i];
-        if (!x || !x.itemHrid) continue;
-        const k = keyOf(x);
-        const idx = byId[k];
-        const remain = Number(x.orderQuantity) - Number(x.filledQuantity || 0);
-        if (!(remain > 0)) {
-          // 已成交/取消：从快照移除
-          if (idx !== undefined && merged[idx]) { merged.splice(idx, 1); byId[k] = undefined; }
-          continue;
-        }
-        if (idx !== undefined && merged[idx]) merged[idx] = x;
-        else { byId[k] = merged.length; merged.push(x); }
-      }
-      rt.listingsWs = merged;
+      mergeListingList(listingSnap);
     }
     if (obj.type === 'init_character_data' && rt.characterID != null) {
       onCharacterSwitch();
@@ -4259,8 +4357,12 @@
     ];
     const result = {
       inventoryWs: (rt.inventoryWs || []).length,
+      listingsWs: (rt.listingsWs || []).length,
+      inventorySource: rt.inventorySource || '',
       inventoryStale: !!rt.inventoryStale,
       inventoryStaleAt: rt.inventoryStaleAt || 0,
+      gold: rt.gold || 0,
+      goldSource: rt.goldSource || '',
       states: []
     };
     for (let i = 0; i < states.length; i++) {
