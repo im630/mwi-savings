@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         银河奶牛 · 攒钱计划
 // @namespace    mwi.savings
-// @version      0.9.6
+// @version      0.9.8
 // @author       im630
 // @license      MIT
 // @description  通过添加心愿装备/资源，自动评估购买心愿物品的攒钱进展。同时支持添加置换物品，能够更方便生活佬攒钱转战斗或者战斗佬攒钱更新装备。
@@ -850,6 +850,181 @@
     const base = spriteBase();
     if (!base) return '<span class="mwi-icon-ph">?</span>';
     return '<svg class="mwi-icon" aria-hidden="true"><use href="' + esc(base) + '#' + esc(hrid.replace('/items/', '')) + '"></use></svg>';
+  }
+
+  // 带「点击去市场」的图标：data-act="goto-market"，由 onClick 分派
+  function iconLink(hrid, enh, title) {
+    return '<span class="mwi-icon-link" data-act="goto-market" data-hrid="' + esc(hrid) +
+      '" data-enh="' + (Number(enh) || 0) + '" title="' + esc(title || '点击查看市场') + '">' +
+      icon(hrid) + '</span>';
+  }
+
+  /* ---------------------------- 跳转市场 ---------------------------- */
+
+  // 取游戏全局对象（不同版本挂在 mwi / game / __game 上）
+  function gameObj() {
+    try {
+      if (typeof pageWin.mwi !== 'undefined' && pageWin.mwi) return pageWin.mwi;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  /**
+   * 打开游戏市场并定位到指定物品。多层策略依次尝试：
+   *  1. 游戏内部 handler（mwi.game.handleGoToMarketplace / goToMarketplace）
+   *  2. 点击「市场」主页面页签
+   *  3. 面板出现后往搜索框填入物品名
+   * 任何一步失败都不报错，只在最后仍没打开市场时给出提示。
+   */
+  function gotoMarket(hrid, enh) {
+    if (!hrid) return;
+    const name = displayName(hrid, enh || 0);
+
+    // 策略 1：游戏内部 handler（最快、最精确）
+    if (tryGameMarketHandler(hrid, enh)) return;
+
+    // 策略 2：点击市场页签
+    const marketTab = findMainTabByName(/市场|Market/i);
+    if (!marketTab) {
+      showNotice('未找到市场页签，请手动打开市场');
+      return;
+    }
+    const selected = marketTab.classList.contains('Mui-selected') ||
+      marketTab.getAttribute('aria-selected') === 'true';
+    if (!selected) marketTab.click();
+    // 面板渲染后再填搜索框；多次尝试覆盖慢渲染
+    [120, 300, 700, 1200].forEach(function (delay) {
+      setTimeout(function () { fillMarketSearch(name); }, delay);
+    });
+  }
+
+  // 在主 tablist 里按文字找页签（只看直接子级，避免命中内部 sheet）
+  function findMainTabByName(re) {
+    const list = rt.tablist || findTablist();
+    if (!list) return null;
+    const tabs = list.querySelectorAll('[role="tab"]');
+    for (let i = 0; i < tabs.length; i++) {
+      if (!isMainNavTab(tabs[i])) continue;
+      const txt = (tabs[i].textContent || '').trim();
+      if (re.test(txt)) return tabs[i];
+    }
+    return null;
+  }
+
+  // 尝试调用游戏内部的市场跳转 handler
+  function tryGameMarketHandler(hrid, enh) {
+    const g = gameObj();
+    if (!g || !g.game) return false;
+    const names = ['handleGoToMarketplace', 'goToMarketplace', 'openMarketplace', 'handleGoToMarket'];
+    for (let i = 0; i < names.length; i++) {
+      const fn = g.game[names[i]];
+      if (typeof fn !== 'function') continue;
+      // 不同版本签名不同，逐个尝试
+      const argsList = [[hrid, enh || 0], [hrid], [hrid.replace('/items/', ''), enh || 0]];
+      for (let a = 0; a < argsList.length; a++) {
+        try {
+          fn.apply(g.game, argsList[a]);
+          return true;
+        } catch (e) { /* 换下一种签名 */ }
+      }
+    }
+    return false;
+  }
+
+  function findMarketSearch() {
+    const sels = [
+      '[class*="MarketplacePanel"] input[type="search"]',
+      '[class*="MarketplacePanel"] input[placeholder]',
+      '[class*="MarketplacePanel"] input:not([type="checkbox"]):not([type="radio"])',
+      '[class*="marketplace"] input[type="search"]',
+      'input[placeholder*="物品"]',
+      'input[placeholder*="搜索"]',
+      'input[placeholder*="Search" i]',
+      'input[placeholder*="Filter" i]'
+    ];
+    for (let i = 0; i < sels.length; i++) {
+      let el = null;
+      try { el = document.querySelector(sels[i]); } catch (e) { el = null; }
+      if (el && !(rt.overlay && rt.overlay.contains(el))) return el;
+    }
+    // 兜底：市场面板内所有可见文本输入里取第一个
+    try {
+      const panel = document.querySelector('[class*="MarketplacePanel"]');
+      if (panel) {
+        const inputs = panel.querySelectorAll('input, textarea');
+        for (let i = 0; i < inputs.length; i++) {
+          const t = String(inputs[i].type || '').toLowerCase();
+          if (t === 'checkbox' || t === 'radio') continue;
+          if (inputs[i].offsetParent === null) continue;
+          if (rt.overlay && rt.overlay.contains(inputs[i])) continue;
+          return inputs[i];
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function fillMarketSearch(text) {
+    const input = findMarketSearch();
+    if (!input || !text) return false;
+    try {
+      const proto = (typeof HTMLTextAreaElement !== 'undefined' && input instanceof HTMLTextAreaElement)
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (setter && setter.set) setter.set.call(input, text);
+      else input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      try { input.setSelectionRange(text.length, text.length); } catch (e) { /* ignore */ }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 自检：输出市场跳转相关 DOM，便于排查选择器
+  function diagMarket() {
+    const out = {};
+    try {
+      const panel = document.querySelector('[class*="MarketplacePanel"]');
+      out.panelFound = !!panel;
+      out.panelClass = panel ? panel.className : null;
+      if (panel) {
+        const inputs = panel.querySelectorAll('input, textarea');
+        out.inputs = [];
+        for (let i = 0; i < inputs.length; i++) {
+          const el = inputs[i];
+          out.inputs.push({
+            tag: el.tagName,
+            type: el.type,
+            placeholder: el.placeholder,
+            cls: el.className,
+            visible: el.offsetParent !== null
+          });
+        }
+      } else {
+        // 没有面板时，列出所有可能相关的类名
+        const all = document.querySelectorAll('[class*="arket"]');
+        out.suspects = [];
+        for (let i = 0; i < all.length && i < 12; i++) {
+          out.suspects.push(all[i].className);
+        }
+      }
+      const g = gameObj();
+      out.hasMwi = !!g;
+      out.hasGame = !!(g && g.game);
+      out.marketHandlers = [];
+      if (g && g.game) {
+        for (const k in g.game) {
+          if (/market/i.test(k) && typeof g.game[k] === 'function') out.marketHandlers.push(k);
+        }
+      }
+    } catch (e) {
+      out.error = String(e && e.message ? e.message : e);
+    }
+    console.log('[攒钱] 市场跳转诊断', out);
+    return out;
   }
 
   function scheduleRender() {
@@ -2996,7 +3171,7 @@
           ? '<span class="num mwi-qty mwi-all-cell" title="库存：' + invStock + ' 市场：' + mktStock + '"><span class="mwi-tag mwi-all-tag" title="库存：' + invStock + ' 市场：' + mktStock + '">全部</span></span>'
           : '<span class="num mwi-qty" title="' + esc('数量 ' + s.qty + '（' + locLabel(loc) + '）') + '">' + fmtQty(s.qty) + '</span>';
         return '<div class="mwi-tr mwi-swap-tr">' +
-          '<span class="mwi-item" title="' + esc(displayName(s.hrid, s.enh) + '（' + locLabel(loc) + ' ' + stock + '）') + '">' + icon(s.hrid) + '</span>' +
+          iconLink(s.hrid, s.enh, displayName(s.hrid, s.enh) + '（' + locLabel(loc) + ' ' + stock + '）· 点击查看市场') +
           qtyCell +
           '<span class="num">' + (ask == null ? '—' : fmt(ask)) + '</span>' +
           '<span class="num">' + (bid == null ? '—' : fmt(bid)) + '</span>' +
@@ -3081,7 +3256,7 @@
     if (!ev.rows.length) return '<div class="mwi-dim">心愿区为空。</div>';
     return ev.rows.map(function (r, i) {
       return '<div class="mwi-row">' +
-        icon(r.hrid) +
+        iconLink(r.hrid, r.enh, displayName(r.hrid, r.enh) + ' · 点击查看市场') +
         '<div class="mwi-grow">' +
           '<div class="mwi-name mwi-share-link" data-act="share-item" data-id="' + esc(r.id) +
             '" title="点击生成吐槽">' + (i + 1) + '. ' + esc(displayName(r.hrid, r.enh)) +
@@ -3157,6 +3332,12 @@
         const inp = rt.overlay && rt.overlay.querySelector('[data-role="price-input"]');
         if (inp) { inp.focus(); inp.select(); }
       }, 0);
+      return;
+    }
+    if (act === 'goto-market') {
+      try {
+        gotoMarket(el.dataset.hrid, Number(el.dataset.enh) || 0);
+      } catch (e) { /* 跳转失败不影响其它功能 */ }
       return;
     }
     if (act === 'action-tab') {
@@ -4006,6 +4187,8 @@
       .mwi-tag { display: inline-block; padding: 0 3px; margin-left: 2px; border: 1px solid #5e75a3; border-radius: 2px; font-size: 10px; line-height: 14px; color: #9fb4e0; }
       .mwi-tag.warn { border-color: #7a3030; color: #ffb0b0; }
       .mwi-icon { width: 22px; height: 22px; flex: 0 0 22px; }
+      .mwi-icon-link { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px; cursor: pointer; border-radius: 3px; }
+      .mwi-icon-link:hover { background: #2e3a52; filter: brightness(1.25); }
       .mwi-icon-ph { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: #2e3a52; border-radius: 3px; font-size: 11px; }
       .mwi-pending { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 7px; font-size: 12px; }
       .mwi-check { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
@@ -4068,6 +4251,28 @@
 
   /* ---------------------------- WebSocket ---------------------------- */
 
+  // 判断某个元素是否属于「主页面导航」页签（库存/装备/技能…）。
+  // 游戏内部的动作 sheet（如 烹饪 → 回蓝）也是 [role="tab"]，
+  // 必须排除，否则点它们会把攒钱面板误收起并切回库存。
+  function isMainNavTab(el) {
+    if (!el) return false;
+    const list = rt.tablist || findTablist();
+    if (!list) return false;
+    // 必须直接挂在主 tablist 下；动作 sheet 的 tab 嵌在面板内部，
+    // 其祖先虽可能包含某个主 tab，但自身不是 tablist 的直接子级。
+    let node = el;
+    while (node) {
+      if (node.parentElement === list) return true;   // 直达 tablist
+      // 只向上走一层判断：若父级不是 tablist，说明是嵌套在面板里的子页签
+      if (!node.parentElement || node.parentElement === document.body) return false;
+      // 继续上溯一层，但若遇到「某个主 tab」就说明是它的后代 → 不是主 tab
+      const parent = node.parentElement;
+      if (parent !== list && list.contains(parent)) return false;
+      node = parent;
+    }
+    return false;
+  }
+
   function onGlobalClick(e) {
     if (!rt.tab && !rt.overlay) return;
     const target = e.target;
@@ -4081,27 +4286,33 @@
       return;
     }
 
-    const list = rt.tablist || findTablist();
-    const inList = list && list.contains(target);
-    const tabLike = target.closest('[role="tab"], .MuiTab-root, .income-tab');
+    // 点击面板外部：不再无条件收起，只有「真正切换主页面」才收起。
+    if (rt.overlay && rt.overlay.contains(target)) return;
 
-    if (!inList && !tabLike) {
-      const btn = target.closest('button, a, [role="button"], [role="menuitem"], [role="option"]');
-      if (btn && /切换角色|切换账号|角色选择|选择角色|更换角色|退出登录|登出|Switch Character|Change Character|Logout|Sign Out/i.test(btn.textContent || '')) {
+    const tabLike = target.closest('[role="tab"], .MuiTab-root, .income-tab');
+    if (tabLike && tabLike !== rt.tab) {
+      if (isMainNavTab(tabLike)) {
+        // 真正的页面切换：收起面板，并让游戏页签恢复选中态
         hideOwnTab();
+        setTimeout(function () {
+          if (!tabLike.isConnected) return;
+          if (!tabLike.classList.contains('Mui-selected') && !tabLike.classList.contains('selected')) {
+            tabLike.classList.add('Mui-selected');
+            tabLike.setAttribute('aria-selected', 'true');
+          }
+        }, 0);
+      } else {
+        // 游戏内部子页签（动作 sheet 等）：什么都不做，让游戏自己处理点击，
+        // 同时保持攒钱面板打开。注意不能 stopPropagation，
+        // 否则会阻断游戏自身的 sheet 切换。
       }
       return;
     }
 
-    hideOwnTab();
-    if (tabLike && tabLike !== rt.tab) {
-      setTimeout(function () {
-        if (!tabLike.isConnected) return;
-        if (!tabLike.classList.contains('Mui-selected') && !tabLike.classList.contains('selected')) {
-          tabLike.classList.add('Mui-selected');
-          tabLike.setAttribute('aria-selected', 'true');
-        }
-      }, 0);
+    // 其它区域点击：只处理「切换角色 / 退出登录」这类需要收起面板的按钮
+    const btn = target.closest('button, a, [role="button"], [role="menuitem"], [role="option"]');
+    if (btn && /切换角色|切换账号|角色选择|选择角色|更换角色|退出登录|登出|Switch Character|Change Character|Logout|Sign Out/i.test(btn.textContent || '')) {
+      hideOwnTab();
     }
   }
 
@@ -4418,7 +4629,9 @@
     rt: rt,
     render: render,
     evaluate: evaluate,
-    diag: diag
+    diag: diag,
+    diagMarket: diagMarket,
+    gotoMarket: gotoMarket
   };
   pageWin.__mwiSavings = api;
   try { window.__mwiSavings = api; } catch (e) { /* ignore */ }
